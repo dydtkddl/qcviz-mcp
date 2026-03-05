@@ -127,7 +127,13 @@ class PySCFBackend(OrbitalBackend):
         """ECP 감지 시 minao 자동 폴백."""
         warnings = []
         effective = minao
-        if hasattr(mol, 'has_ecp') and mol.has_ecp() and minao == 'minao':
+        ecp_detected = False
+        if hasattr(mol, 'has_ecp'):
+            ecp_result = mol.has_ecp()
+            ecp_detected = bool(ecp_result) if not isinstance(ecp_result, dict) else len(ecp_result) > 0
+        if not ecp_detected and hasattr(mol, '_ecp') and mol._ecp:
+            ecp_detected = True
+        if ecp_detected and minao == 'minao':
             effective = 'sto-3g'
             warnings.append(
                 "ECP detected. Switched IAO reference basis from 'minao' to 'sto-3g'. "
@@ -135,6 +141,19 @@ class PySCFBackend(OrbitalBackend):
                 "basis (e.g., def2-SVP) without ECP."
             )
         return effective, warnings
+
+
+    @staticmethod
+    def _unpack_uhf(mo_coeff, mo_occ):
+        """UHF mo_coeff/mo_occ 언패킹. tuple이든 3D ndarray든 처리."""
+        import numpy as np
+        if isinstance(mo_coeff, (tuple, list)):
+            return mo_coeff[0], mo_coeff[1], mo_occ[0], mo_occ[1]
+        elif isinstance(mo_coeff, np.ndarray) and mo_coeff.ndim == 3:
+            return mo_coeff[0], mo_coeff[1], mo_occ[0], mo_occ[1]
+        else:
+            raise ValueError(f"Unexpected mo_coeff type: {type(mo_coeff)}, ndim={getattr(mo_coeff, 'ndim', '?')}")
+
 
     def compute_iao(self, scf_result: SCFResult, mol_obj: Any, minao: str = "minao") -> IAOResult:
         if not _HAS_PYSCF:
@@ -314,8 +333,7 @@ class PySCFBackend(OrbitalBackend):
     def compute_iao_uhf(self, mf, mol, minao: str = "minao"):
         """UHF IAO: alpha/beta 스핀 채널 분리."""
         effective, warnings = self._resolve_minao(mol, minao)
-        mo_a, mo_b = mf.mo_coeff
-        occ_a, occ_b = mf.mo_occ
+        mo_a, mo_b, occ_a, occ_b = self._unpack_uhf(mf.mo_coeff, mf.mo_occ)
         mo_occ_a = mo_a[:, occ_a > 0]
         mo_occ_b = mo_b[:, occ_b > 0]
         iao_a = lo.iao.iao(mol, mo_occ_a, minao=effective)
@@ -330,8 +348,7 @@ class PySCFBackend(OrbitalBackend):
 
     def compute_ibo_uhf(self, mf, iao_result, mol):
         """UHF IBO: alpha/beta 각각 로컬라이즈."""
-        mo_a, mo_b = mf.mo_coeff
-        occ_a, occ_b = mf.mo_occ
+        mo_a, mo_b, occ_a, occ_b = self._unpack_uhf(mf.mo_coeff, mf.mo_occ)
         mo_occ_a = mo_a[:, occ_a > 0]
         mo_occ_b = mo_b[:, occ_b > 0]
         ibo_a = lo.ibo.ibo(mol, mo_occ_a, iaos=iao_result["alpha"]["iao_coeff"])

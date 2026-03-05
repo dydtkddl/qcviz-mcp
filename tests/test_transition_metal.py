@@ -14,7 +14,7 @@ class TestTransitionMetal:
     def test_ecp_detection_lanl2dz(self):
         """ECP 기저(LANL2DZ) 감지."""
         from pyscf import gto
-        mol = gto.M(atom="Fe 0 0 0", basis="lanl2dz", spin=4)
+        mol = gto.M(atom="Fe 0 0 0", basis="lanl2dz", ecp="lanl2dz", spin=4)
         assert mol.has_ecp()
 
     def test_allelectron_no_ecp(self):
@@ -26,7 +26,7 @@ class TestTransitionMetal:
     def test_resolve_minao_ecp(self):
         """ECP 시 minao 자동 폴백 → 'sto-3g'."""
         from pyscf import gto
-        mol = gto.M(atom="Fe 0 0 0", basis="lanl2dz", spin=4)
+        mol = gto.M(atom="Fe 0 0 0", basis="lanl2dz", ecp="lanl2dz", spin=4)
         effective, warnings = backend._resolve_minao(mol, "minao")
         assert effective == "sto-3g"
         assert len(warnings) > 0

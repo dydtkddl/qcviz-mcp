@@ -16,7 +16,12 @@ class TestUHFIBO:
             "O 0 0 0; O 0 0 1.208", "sto-3g", spin=2
         )
         assert mf.converged
-        assert isinstance(mf.mo_coeff, (tuple, list))
+        # UHF: mo_coeff is either tuple or ndarray with ndim=3
+        import numpy as np
+        if isinstance(mf.mo_coeff, np.ndarray):
+            assert mf.mo_coeff.ndim == 3  # shape=(2, nao, nmo)
+        else:
+            assert isinstance(mf.mo_coeff, (tuple, list))
 
     def test_o2_triplet_iao_uhf(self):
         """O₂ 삼중항 IAO: alpha/beta 분리."""
@@ -61,5 +66,7 @@ class TestUHFIBO:
         mf, mol = backend.compute_scf_flexible(
             "O 0 0 0; H 0 0.757 0.587; H 0 -0.757 0.587", "sto-3g", spin=0
         )
-        assert not isinstance(mf.mo_coeff, (tuple, list))
+        # RHF: mo_coeff is 2D ndarray
+        import numpy as np
+        assert isinstance(mf.mo_coeff, np.ndarray) and mf.mo_coeff.ndim == 2
         assert mf.converged
