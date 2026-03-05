@@ -1,0 +1,30 @@
+site_name: QCViz-MCP Documentation
+site_url: https://dydtkddl.github.io/qcviz-mcp/
+repo_url: https://github.com/dydtkddl/qcviz-mcp
+repo_name: dydtkddl/qcviz-mcp
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: teal
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: true
+            show_root_heading: true
+
+nav:
+  - Home: index.md
+  - API Reference:
+      - Backends: api/backends.md
+      - Tools: api/tools.md
+      - MCP Server: api/server.md
+  - Examples: examples.md
+  - Changelog: changelog.md

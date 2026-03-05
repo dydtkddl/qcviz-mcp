@@ -3,6 +3,7 @@
 """
 import json
 import pytest
+from pathlib import Path
 from qcviz_mcp.mcp_server import mcp
 from qcviz_mcp.tools import core
 
@@ -54,15 +55,25 @@ def test_compute_partial_charges_tool(sample_water_xyz):
     assert "O:" in result
 
 def test_convert_format_tool(sample_water_xyz, tmp_output_dir):
-    """convert_format 도구 호출 테스트."""
+    """convert_format 도구 호출 테스트 — 보안 검증 포함."""
     pytest.importorskip("ase")
 
-    xyz_path = tmp_output_dir / "tool_convert.xyz"
-    xyz_path.write_text(sample_water_xyz)
-    cif_path = tmp_output_dir / "tool_convert.cif"
+    # 프로젝트 내부 경로 사용
+    import tempfile
+    project_root = Path(core._PROJECT_ROOT)
+    test_dir = project_root / "tests" / "_tmp_convert"
+    test_dir.mkdir(parents=True, exist_ok=True)
 
-    result = core.convert_format(str(xyz_path), str(cif_path))
-    assert "성공" in result
+    try:
+        xyz_path = test_dir / "tool_convert.xyz"
+        xyz_path.write_text(sample_water_xyz)
+        cif_path = test_dir / "tool_convert.cif"
+
+        result = core.convert_format(str(xyz_path), str(cif_path))
+        assert "성공" in result
+    finally:
+        import shutil
+        shutil.rmtree(test_dir, ignore_errors=True)
 
 def test_analyze_bonding_tool(sample_water_xyz):
     """analyze_bonding 도구 호출 테스트."""

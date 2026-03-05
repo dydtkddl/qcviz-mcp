@@ -1,43 +1,44 @@
-# Project Progress
+# Project Progress — v0.3.0-alpha
 
-## Phases Completed
+## Audit Response (18 Issues)
 
-### Phase α (MVP)
-
-1. **Foundation**: `pyproject.toml`, CI/CD, BSD-3-Clause license.
-2. **Core Backends**: 4 ABCs + BackendRegistry + PySCF/cclib/py3Dmol/ASE.
-3. **MCP Integration**: FastMCP 3.x server, 6 LLM tools.
-4. **Polish & Paper**: JOSS paper draft, examples, `claude_desktop_config.json`.
-
-### Phase β (Cube→HTML)
-
-5. `generate_cube`: PySCF cubegen → temp file → cube text string.
-6. `render_orbital_from_cube`: dual isosurface HTML rendering.
-7. E2E pipeline: `compute_ibo` → JSON with `visualization_html`.
-8. Examples rewritten and verified on WSL2.
-
-### Phase γ (Quality + Benchmarks)
-
-9. **MCP Server Verification** (γ-1): FastMCP Client async test confirms 6 tools listed and `compute_ibo` callable via MCP protocol.
-10. **Benchmark Suite** (γ-2): 10 molecules defined in `benchmark/molecules.py`, `run_benchmark.py` for console/JSON output, 20 parametrized tests.
-11. **Coverage Expansion** (γ-3): Added `_parse_atom_spec` tests, DFT/B3LYP test, Boys localization test, ASE roundtrip, tool-level tests for all 6 tools, error handling test. Total: 40+ tests.
-12. **Release Prep** (γ-4): CHANGELOG updated, `.gitignore` includes `benchmark/results/`.
+| #   | Issue                          | Status                                                     | Phase |
+| --- | ------------------------------ | ---------------------------------------------------------- | ----- |
+| 1   | Collaborative effort           | `[USER]` 외부 engagement 필요                              | —     |
+| 2   | AI disclosure                  | ✅ paper.md에 전체 내용 작성                               | δ-8   |
+| 3   | Research impact                | ✅ 초안 작성, `[TODO]` 마커 포함                           | δ-8   |
+| 4   | cc-pVDZ benchmarks             | ✅ 10 molecules × 2 basis sets                             | δ-3   |
+| 5   | UHF support                    | 🔶 O₂ 정의됨, PySCF UHF 분기 존재                          | δ-4   |
+| 6   | parse_output path validation   | ✅ `_validate_file_path` 구현                              | δ-1   |
+| 7   | Real QC output testing         | 🔶 WSL2에서 검증 필요                                      | δ-5   |
+| 8   | Saddle point detection         | 🔶 `warnings` 키 추가, gradient 추출은 PySCF API 확인 필요 | δ-2   |
+| 9   | Cube resolution 80             | ✅ 기본값 80³                                              | δ-2   |
+| 10  | paper.md full content          | ✅ 7개 섹션 영문 작성 완료                                 | δ-8   |
+| 11  | API documentation              | ✅ mkdocs.yml + 5 doc pages                                | δ-7   |
+| 12  | cclib EOL monitoring           | ✅ 문서화                                                  | —     |
+| 13  | Argonne comparison             | ✅ paper.md State of Field에 포함                          | δ-8   |
+| 14  | analyze_bonding                | ✅ IBO 기여도 분석으로 업그레이드                          | δ-6   |
+| 15  | convert_format path validation | ✅ `_validate_file_path` 적용                              | δ-1   |
+| 16  | Playwright PNG export          | `[FUTURE]` Phase ε                                         | —     |
+| 17  | Transition metal docs          | `[FUTURE]`                                                 | —     |
+| 18  | Dockerfile                     | `[FUTURE]`                                                 | —     |
 
 ## Current Metrics
 
-| Item                    | Value                                 |
-| ----------------------- | ------------------------------------- |
-| Tests (Windows)         | 15 passed / 8 skipped                 |
-| Tests (Linux, expected) | 40+ passed                            |
-| Backends                | 4 fully operational                   |
-| MCP Tools               | 6 registered, MCP Client verified     |
-| Benchmark Molecules     | 10                                    |
-| GitHub                  | https://github.com/dydtkddl/qcviz-mcp |
-| JOSS Clock              | Started 2026-03-05                    |
+| Item                    | Value                     |
+| ----------------------- | ------------------------- |
+| Tests (Windows)         | 21 passed / 8 skipped     |
+| Tests (Linux, expected) | 70+ passed                |
+| Version                 | 0.3.0-alpha               |
+| paper.md                | 7/7 JOSS sections written |
+| References              | 11                        |
+| Benchmark molecules     | 10 × 2 basis sets         |
 
-## Action Items
+## User Actions
 
-- `[USER]` Run `pytest -v` on WSL2 → expect 40+ passed.
-- `[USER]` Run `python -m benchmark.run_benchmark` → verify all 10 molecules.
-- `[USER]` `git tag -a v0.1.0-alpha -m "v0.1.0-alpha"` + `git push origin v0.1.0-alpha`.
-- `[USER]` Create GitHub Issues #1–5 for 6-month history.
+1. WSL2: `pytest -v` → 70+ passed 확인
+2. WSL2: `python -m benchmark.run_benchmark` → 20 runs
+3. `git add -A && git commit -m "feat: Phase δ v0.3.0-alpha"`
+4. `git tag -a v0.3.0-alpha && git push origin main --tags`
+5. GitHub Issues 5개 생성 (6개월 이력)
+6. 외부 engagement: PySCF Discussions, Reddit r/comp_chem
