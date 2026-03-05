@@ -8,6 +8,7 @@ build/
 .venv*/
 *.cube
 examples/output/
+benchmark/results/
 .eggs/
 *.egg
 *.so

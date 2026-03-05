@@ -7,11 +7,11 @@ tags:
   - large language models
   - model context protocol
 authors:
-  - name: User
-    orcid: 0000-0000-0000-0000
+  - name: Yongsang An
+    orcid: 0000-0000-0000-0000  
     affiliation: 1
 affiliations:
-  - name: Unknown
+  - name: Kyung Hee University
     index: 1
 date: 05 March 2026
 bibliography: paper.bib

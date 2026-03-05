@@ -57,3 +57,42 @@ def test_generate_cube_water(pyscf_backend, sample_water_xyz):
     third_line_parts = lines[2].split()
     n_atoms = abs(int(third_line_parts[0]))
     assert n_atoms == 3  # 물 분자
+
+def test_parse_atom_spec_pyscf_format():
+    """이미 PySCF 포맷인 입력이 변환 없이 통과하는지 확인."""
+    from qcviz_mcp.backends.pyscf_backend import _parse_atom_spec
+
+    result = _parse_atom_spec("O 0 0 0; H 0 0 1; H 0 1 0")
+    assert result == "O 0 0 0; H 0 0 1; H 0 1 0"
+
+def test_parse_atom_spec_xyz_format():
+    """XYZ 파일 포맷이 PySCF 포맷으로 변환되는지 확인."""
+    from qcviz_mcp.backends.pyscf_backend import _parse_atom_spec
+
+    xyz = "3\ncomment line\nO 0 0 0\nH 0 0 1\nH 0 1 0\n"
+    result = _parse_atom_spec(xyz)
+    assert "O" in result
+    assert ";" in result
+    assert "comment" not in result
+
+def test_compute_scf_dft(pyscf_backend):
+    """DFT (B3LYP) SCF가 동작하는지 확인."""
+    scf_res, mol = pyscf_backend.compute_scf(
+        "O 0 0 0; H 0 0.757 0.587; H 0 -0.757 0.587",
+        basis="sto-3g",
+        method="B3LYP",
+    )
+    assert scf_res.converged
+    assert scf_res.energy_hartree < -74.0
+
+def test_compute_ibo_boys(pyscf_backend):
+    """Boys 국소화 방식이 동작하는지 확인."""
+    scf_res, mol = pyscf_backend.compute_scf(
+        "O 0 0 0; H 0 0.757 0.587; H 0 -0.757 0.587",
+        basis="sto-3g", method="hf",
+    )
+    iao_res = pyscf_backend.compute_iao(scf_res, mol)
+    ibo_res = pyscf_backend.compute_ibo(
+        scf_res, iao_res, mol, localization_method="BOYS"
+    )
+    assert ibo_res.n_ibo == 5

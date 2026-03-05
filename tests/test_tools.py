@@ -44,3 +44,37 @@ def test_visualize_orbital_tool(sample_water_xyz):
     result = core.visualize_orbital(sample_water_xyz)
     assert "성공적으로 오비탈 렌더링 HTML 생성 완료" in result
     assert "<div" in result or "3Dmol" in result
+
+def test_compute_partial_charges_tool(sample_water_xyz):
+    """compute_partial_charges 도구 호출 테스트."""
+    pytest.importorskip("pyscf")
+
+    result = core.compute_partial_charges(sample_water_xyz, basis="sto-3g")
+    assert "부분 전하" in result
+    assert "O:" in result
+
+def test_convert_format_tool(sample_water_xyz, tmp_output_dir):
+    """convert_format 도구 호출 테스트."""
+    pytest.importorskip("ase")
+
+    xyz_path = tmp_output_dir / "tool_convert.xyz"
+    xyz_path.write_text(sample_water_xyz)
+    cif_path = tmp_output_dir / "tool_convert.cif"
+
+    result = core.convert_format(str(xyz_path), str(cif_path))
+    assert "성공" in result
+
+def test_analyze_bonding_tool(sample_water_xyz):
+    """analyze_bonding 도구 호출 테스트."""
+    pytest.importorskip("pyscf")
+
+    result = core.analyze_bonding(sample_water_xyz)
+    assert "IBO" in result
+    assert "5" in result  # 물 분자의 IBO 개수
+
+def test_compute_ibo_error_handling():
+    """잘못된 입력에 대한 에러 처리 확인."""
+    result_str = core.compute_ibo("invalid xyz data")
+    result = json.loads(result_str)
+    assert result["status"] == "error"
+    assert "error" in result

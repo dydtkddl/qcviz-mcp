@@ -34,3 +34,23 @@ def test_ase_read_write(ase_backend, sample_water_xyz, tmp_output_dir):
     cif_path = tmp_output_dir / "water.cif"
     result_cif = ase_backend.convert_format(xyz_path, cif_path)
     assert result_cif.exists()
+
+def test_ase_convert_xyz_to_cif_roundtrip(ase_backend, sample_water_xyz, tmp_output_dir):
+    """xyz → cif → xyz 왕복 변환 테스트."""
+    xyz_path = tmp_output_dir / "roundtrip.xyz"
+    xyz_path.write_text(sample_water_xyz)
+
+    cif_path = tmp_output_dir / "roundtrip.cif"
+    ase_backend.convert_format(xyz_path, cif_path)
+
+    xyz_back = tmp_output_dir / "roundtrip_back.xyz"
+    ase_backend.convert_format(cif_path, xyz_back)
+    assert xyz_back.exists()
+
+    atoms = ase_backend.read_structure(xyz_back)
+    assert len(atoms.symbols) == 3
+
+def test_ase_read_non_existent(ase_backend):
+    """존재하지 않는 파일 읽기 시 에러."""
+    with pytest.raises(Exception):
+        ase_backend.read_structure("/tmp/nonexistent_file_xyz_12345.xyz")
