@@ -1,12 +1,14 @@
-# -*- coding: utf-8 -*-
 """Phase ζ-3: 헤드리스 PNG 내보내기 테스트."""
+
 import os
+
 import pytest
 
 # Playwright 설치 여부 확인
 playwright_available = False
 try:
     from playwright.sync_api import sync_playwright
+
     playwright_available = True
 except ImportError:
     pass
@@ -36,6 +38,7 @@ viewer.zoomTo(); viewer.render();
     async def test_html_to_png_basic(self, sample_html, tmp_path):
         """기본 PNG 캡처 (Chromium 미설치 시 graceful skip)."""
         from qcviz_mcp.renderers.png_exporter import html_to_png
+
         png_path = str(tmp_path / "output.png")
         result = await html_to_png(sample_html, png_path=png_path, wait_ms=5000)
         if not result["success"]:
@@ -49,6 +52,7 @@ viewer.zoomTo(); viewer.render();
     async def test_png_dimensions(self, sample_html, tmp_path):
         """지정 크기 캡처."""
         from qcviz_mcp.renderers.png_exporter import html_to_png
+
         result = await html_to_png(sample_html, width=1024, height=768, wait_ms=5000)
         if result["success"]:
             assert result["width"] == 2048
@@ -58,6 +62,7 @@ viewer.zoomTo(); viewer.render();
     async def test_auto_png_path(self, sample_html):
         """png_path=None → 자동 생성."""
         from qcviz_mcp.renderers.png_exporter import html_to_png
+
         result = await html_to_png(sample_html, wait_ms=5000)
         if result["success"]:
             assert result["png_path"].endswith(".png")
@@ -65,6 +70,7 @@ viewer.zoomTo(); viewer.render();
     def test_sync_wrapper(self, sample_html):
         """동기 래퍼."""
         from qcviz_mcp.renderers.png_exporter import html_to_png_sync
+
         result = html_to_png_sync(sample_html, wait_ms=5000)
         assert isinstance(result, dict)
         assert "success" in result
@@ -74,6 +80,7 @@ class TestPNGGracefulDegradation:
     """Playwright 없어도 다른 기능 정상 동작."""
 
     def test_import_renderers_no_crash(self):
-        """renderers 패키지 import 에러 없음."""
+        """Renderers 패키지 import 에러 없음."""
         from qcviz_mcp.renderers import png_exporter
+
         assert hasattr(png_exporter, "html_to_png")

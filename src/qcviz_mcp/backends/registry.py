@@ -1,19 +1,15 @@
-"""
-QCViz-MCP 백엔드 레지스트리 시스템.
+"""QCViz-MCP 백엔드 레지스트리 시스템.
 
 플러그인 형태의 백엔드를 등록하고 관리하며, 사용 가능한 백엔드를 동적으로 제공합니다.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import TypeVar, Type
+from typing import TypeVar
 
 from qcviz_mcp.backends.base import (
     BackendBase,
-    OrbitalBackend,
-    ParserBackend,
-    StructureBackend,
-    VisualizationBackend,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,6 +19,7 @@ T = TypeVar("T", bound=BackendBase)
 
 class BackendNotAvailableError(Exception):
     """요청한 백엔드를 사용할 수 없거나 필수 의존성이 설치되지 않았을 때 발생하는 예외."""
+
     pass
 
 
@@ -30,10 +27,10 @@ class BackendRegistry:
     """백엔드 클래스들을 등록하고 관리하는 레지스트리."""
 
     def __init__(self) -> None:
-        self._backends: dict[str, Type[BackendBase]] = {}
+        self._backends: dict[str, type[BackendBase]] = {}
         self._instances: dict[str, BackendBase] = {}
 
-    def register(self, backend_class: Type[BackendBase]) -> None:
+    def register(self, backend_class: type[BackendBase]) -> None:
         """새로운 백엔드 클래스를 등록합니다."""
         name = backend_class.name()
         self._backends[name] = backend_class
@@ -55,7 +52,7 @@ class BackendRegistry:
 
         return self._instances[name]
 
-    def get_by_type(self, backend_type: Type[T]) -> list[T]:
+    def get_by_type(self, backend_type: type[T]) -> list[T]:
         """특정 타입(인터페이스)을 구현한 사용 가능한 모든 백엔드 인스턴스 목록을 반환합니다."""
         instances = []
         for name, cls in self._backends.items():

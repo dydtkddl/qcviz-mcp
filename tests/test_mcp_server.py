@@ -1,5 +1,5 @@
 """MCP 서버 시작 및 도구 목록 반환 테스트."""
-import json
+
 import pytest
 
 
@@ -31,6 +31,7 @@ def test_server_has_tools():
 async def test_server_list_tools():
     """FastMCP Client로 도구 목록 6개를 확인."""
     from fastmcp import Client
+
     from qcviz_mcp.mcp_server import mcp
 
     async with Client(mcp) as client:
@@ -50,6 +51,7 @@ async def test_server_call_compute_ibo():
     """compute_ibo 도구를 MCP 프로토콜로 호출하는 통합 테스트."""
     pytest.importorskip("pyscf")
     from fastmcp import Client
+
     from qcviz_mcp.mcp_server import mcp
 
     async with Client(mcp) as client:

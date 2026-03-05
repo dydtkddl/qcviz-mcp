@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """벤치마크 분자에 대한 파라미터화 테스트."""
-import pytest
+
 import numpy as np
+import pytest
 
 pyscf = pytest.importorskip("pyscf")
 
@@ -22,9 +22,7 @@ _IDS = [f"{mol.name}_{basis}" for mol, basis in _PARAMS]
 @pytest.mark.parametrize("mol,basis", _PARAMS, ids=_IDS)
 def test_ibo_count(mol, basis):
     """각 분자·기저함수의 IBO 개수가 기대값과 일치하는지 확인."""
-    scf_res, mol_obj = backend.compute_scf(
-        mol.atom_spec, basis=basis, method="HF"
-    )
+    scf_res, mol_obj = backend.compute_scf(mol.atom_spec, basis=basis, method="HF")
     assert scf_res.converged
     iao_res = backend.compute_iao(scf_res, mol_obj)
     ibo_res = backend.compute_ibo(scf_res, iao_res, mol_obj)
@@ -37,9 +35,7 @@ def test_ibo_count(mol, basis):
 @pytest.mark.parametrize("mol,basis", _PARAMS, ids=_IDS)
 def test_charge_conservation(mol, basis):
     """각 분자의 IAO 부분 전하 합이 0에 가까운지 확인."""
-    scf_res, mol_obj = backend.compute_scf(
-        mol.atom_spec, basis=basis, method="HF"
-    )
+    scf_res, mol_obj = backend.compute_scf(mol.atom_spec, basis=basis, method="HF")
     iao_res = backend.compute_iao(scf_res, mol_obj)
 
     charge_sum = float(np.sum(iao_res.charges))

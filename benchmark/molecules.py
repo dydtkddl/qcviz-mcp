@@ -165,3 +165,35 @@ TRANSITION_METAL_MOLECULES: list[BenchmarkMolecule] = [
         description="TiCl4 tetrahedral. All-electron def2-SVP",
     ),
 ]
+
+# ═══ Phase η-1: 4d/5d 전이금속 벤치마크 ═══
+HEAVY_TM_MOLECULES: list[BenchmarkMolecule] = [
+    BenchmarkMolecule(
+        name="zrcl4",
+        atom_spec=(
+            "Zr  0.000  0.000  0.000; "
+            "Cl  1.350  1.350  1.350; Cl -1.350 -1.350  1.350; "
+            "Cl -1.350  1.350 -1.350; Cl  1.350 -1.350 -1.350"
+        ),
+        basis_sets=("def2-svp",),
+        expected_n_ibo=0,
+        description="ZrCl4 tetrahedral. 4d TM. All-electron def2-SVP",
+    ),
+    BenchmarkMolecule(
+        name="mo_co_6",
+        atom_spec=(
+            "Mo  0.000  0.000  0.000; "
+            "C   0.000  0.000  2.063; O   0.000  0.000  3.200; "
+            "C   2.063  0.000  0.000; O   3.200  0.000  0.000; "
+            "C  -2.063  0.000  0.000; O  -3.200  0.000  0.000; "
+            "C   0.000  2.063  0.000; O   0.000  3.200  0.000; "
+            "C   0.000 -2.063  0.000; O   0.000 -3.200  0.000; "
+            "C   0.000  0.000 -2.063; O   0.000  0.000 -3.200"
+        ),
+        basis_sets=("def2-svp",),
+        expected_n_ibo=0,
+        description="Mo(CO)6 octahedral. 4d TM. All-electron def2-SVP",
+    ),
+]
+
+EXTENDED_BASIS_SETS: tuple[str, ...] = ("sto-3g", "cc-pvdz", "cc-pvtz", "aug-cc-pvdz")

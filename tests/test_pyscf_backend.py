@@ -1,43 +1,51 @@
-"""
-pyscf_backend 모듈 단위 테스트.
-"""
-import pytest
+"""pyscf_backend 모듈 단위 테스트."""
+
 import numpy as np
+import pytest
 
 pytest.importorskip("pyscf")
 
 from qcviz_mcp.backends.registry import registry
+
 
 @pytest.fixture
 def pyscf_backend():
     """PySCF 백엔드 객체를 반환합니다."""
     return registry.get("pyscf")
 
+
 def test_compute_scf(pyscf_backend, sample_water_xyz):
     result, mol = pyscf_backend.compute_scf(
         atom_spec=sample_water_xyz, basis="sto-3g", method="hf"
     )
     assert result.converged is True
-    assert result.energy_hartree < -74.0 # 전형적인 물의 HF/STO-3G 에너지
+    assert result.energy_hartree < -74.0  # 전형적인 물의 HF/STO-3G 에너지
     assert result.mo_coeff is not None
     assert mol.natm == 3
 
+
 def test_compute_ibo_water(pyscf_backend, sample_water_xyz):
     # 기초 계산 수행 (이 과정에서 IAO도 내부적으로 거침)
-    scf_res, mol = pyscf_backend.compute_scf(sample_water_xyz, basis="sto-3g", method="hf")
+    scf_res, mol = pyscf_backend.compute_scf(
+        sample_water_xyz, basis="sto-3g", method="hf"
+    )
     iao_res = pyscf_backend.compute_iao(scf_res, mol)
-    
+
     assert iao_res.charges is not None
     assert len(iao_res.charges) == 3
-    assert np.isclose(np.sum(iao_res.charges), 0.0, atol=1e-5) # 중성 분자의 부분 전하 합은 0
-    
+    assert np.isclose(
+        np.sum(iao_res.charges), 0.0, atol=1e-5
+    )  # 중성 분자의 부분 전하 합은 0
+
     # IBO 계산
     ibo_res = pyscf_backend.compute_ibo(scf_res, iao_res, mol)
-    assert ibo_res.n_ibo == 5 # 물분자 점유 오비탈: Core 1s, O-H bond x2, lone pair x2
+    assert ibo_res.n_ibo == 5  # 물분자 점유 오비탈: Core 1s, O-H bond x2, lone pair x2
+
 
 def test_unsupported_method(pyscf_backend, sample_water_xyz):
     with pytest.raises(ValueError, match="지원하지 않는 메서드 유형"):
         pyscf_backend.compute_scf(atom_spec=sample_water_xyz, method="UNKNOWN")
+
 
 def test_generate_cube_water(pyscf_backend, sample_water_xyz):
     """generate_cube가 유효한 Gaussian cube 포맷 문자열을 반환하는지 확인."""
@@ -46,7 +54,10 @@ def test_generate_cube_water(pyscf_backend, sample_water_xyz):
     ibo_res = pyscf_backend.compute_ibo(scf_res, iao_res, mol)
 
     cube_text = pyscf_backend.generate_cube(
-        mol, ibo_res.coefficients, 0, grid_points=(20, 20, 20),
+        mol,
+        ibo_res.coefficients,
+        0,
+        grid_points=(20, 20, 20),
     )
 
     assert isinstance(cube_text, str)
@@ -58,12 +69,14 @@ def test_generate_cube_water(pyscf_backend, sample_water_xyz):
     n_atoms = abs(int(third_line_parts[0]))
     assert n_atoms == 3  # 물 분자
 
+
 def test_parse_atom_spec_pyscf_format():
     """이미 PySCF 포맷인 입력이 변환 없이 통과하는지 확인."""
     from qcviz_mcp.backends.pyscf_backend import _parse_atom_spec
 
     result = _parse_atom_spec("O 0 0 0; H 0 0 1; H 0 1 0")
     assert result == "O 0 0 0; H 0 0 1; H 0 1 0"
+
 
 def test_parse_atom_spec_xyz_format():
     """XYZ 파일 포맷이 PySCF 포맷으로 변환되는지 확인."""
@@ -75,6 +88,7 @@ def test_parse_atom_spec_xyz_format():
     assert ";" in result
     assert "comment" not in result
 
+
 def test_compute_scf_dft(pyscf_backend):
     """DFT (B3LYP) SCF가 동작하는지 확인."""
     scf_res, mol = pyscf_backend.compute_scf(
@@ -85,11 +99,13 @@ def test_compute_scf_dft(pyscf_backend):
     assert scf_res.converged
     assert scf_res.energy_hartree < -74.0
 
+
 def test_compute_ibo_boys(pyscf_backend):
     """Boys 국소화 방식이 동작하는지 확인."""
     scf_res, mol = pyscf_backend.compute_scf(
         "O 0 0 0; H 0 0.757 0.587; H 0 -0.757 0.587",
-        basis="sto-3g", method="hf",
+        basis="sto-3g",
+        method="hf",
     )
     iao_res = pyscf_backend.compute_iao(scf_res, mol)
     ibo_res = pyscf_backend.compute_ibo(

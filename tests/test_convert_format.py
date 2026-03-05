@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
 """convert_format 도구 통합 테스트."""
+
 import os
-import pytest
 from pathlib import Path
+
+import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -14,11 +15,12 @@ class TestConvertFormat:
 
     def _project_path(self, *parts):
         from qcviz_mcp.tools.core import _PROJECT_ROOT
+
         return os.path.join(_PROJECT_ROOT, *parts)
 
     def test_xyz_to_cif(self, tmp_path):
         """water.xyz → .cif 변환."""
-        from qcviz_mcp.tools.core import convert_format, _PROJECT_ROOT
+        from qcviz_mcp.tools.core import convert_format
 
         input_xyz = str(FIXTURES_DIR / "water.xyz")
         # 출력을 프로젝트 내부에 생성
@@ -32,6 +34,7 @@ class TestConvertFormat:
             assert os.path.exists(out_cif)
         finally:
             import shutil
+
             shutil.rmtree(out_dir, ignore_errors=True)
 
     def test_xyz_to_extxyz(self):
@@ -48,6 +51,7 @@ class TestConvertFormat:
             assert "성공" in result
         finally:
             import shutil
+
             shutil.rmtree(out_dir, ignore_errors=True)
 
     def test_invalid_input_path(self):
@@ -63,8 +67,5 @@ class TestConvertFormat:
         """출력 경로 탐색 공격 차단."""
         from qcviz_mcp.tools.core import convert_format
 
-        result = convert_format(
-            str(FIXTURES_DIR / "water.xyz"),
-            "../../etc/passwd"
-        )
+        result = convert_format(str(FIXTURES_DIR / "water.xyz"), "../../etc/passwd")
         assert "보안" in result or "오류" in result

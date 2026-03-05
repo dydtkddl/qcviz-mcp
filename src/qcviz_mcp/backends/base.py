@@ -1,8 +1,8 @@
-"""
-QCViz-MCP 백엔드 공통 인터페이스 및 데이터 클래스 정의.
+"""QCViz-MCP 백엔드 공통 인터페이스 및 데이터 클래스 정의.
 
 추상 클래스(ABC)를 통해 다양한 양자화학 프로그램 및 시각화 도구를 지원합니다.
 """
+
 from __future__ import annotations
 
 import abc
@@ -16,6 +16,7 @@ import numpy as np
 @dataclass(frozen=True)
 class SCFResult:
     """단일 SCF 계산 결과."""
+
     converged: bool
     energy_hartree: float
     mo_coeff: np.ndarray
@@ -28,6 +29,7 @@ class SCFResult:
 @dataclass(frozen=True)
 class IAOResult:
     """Intrinsic Atomic Orbital 계산 결과."""
+
     coefficients: np.ndarray
     charges: np.ndarray
 
@@ -35,6 +37,7 @@ class IAOResult:
 @dataclass(frozen=True)
 class IBOResult:
     """Intrinsic Bond Orbital 계산 결과."""
+
     coefficients: np.ndarray
     occupations: np.ndarray
     n_ibo: int
@@ -43,6 +46,7 @@ class IBOResult:
 @dataclass(frozen=True)
 class ParsedResult:
     """양자화학 프로그램 출력 파싱 결과."""
+
     energy_hartree: float | None
     coordinates: np.ndarray | None  # shape: (n_atoms, 3)
     atomic_numbers: list[int] | None
@@ -54,6 +58,7 @@ class ParsedResult:
 @dataclass(frozen=True)
 class AtomsData:
     """원자 구조 정보 데이터."""
+
     symbols: list[str]
     positions: np.ndarray  # shape: (n_atoms, 3)
     cell: np.ndarray | None
@@ -157,7 +162,9 @@ class StructureBackend(BackendBase):
         pass
 
     @abc.abstractmethod
-    def write_structure(self, atoms: AtomsData, path: str | Path, format: str | None = None) -> Path:
+    def write_structure(
+        self, atoms: AtomsData, path: str | Path, format: str | None = None
+    ) -> Path:
         """AtomsData 객체를 지정된 포맷의 파일로 저장합니다."""
         pass
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qcviz-mcp"
-version = "0.5.0-alpha"
+version = "0.6.0-alpha"
 description = "A Model Context Protocol Server for Quantum Chemistry Visualization and Electronic Structure Analysis"
 readme = "README.md"
 authors = [
@@ -60,6 +60,7 @@ docs = [
     "mkdocstrings[python]>=0.24",
 ]
 png = ["playwright>=1.40"]
+viz-native = ["pyvista>=0.43"]
 
 [project.urls]
 Homepage = "https://github.com/dydtkddl/qcviz-mcp"
@@ -78,3 +79,7 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = [
+    "slow: marks tests as slow",
+    "network: marks tests requiring network",
+]

@@ -1,7 +1,7 @@
-"""
-FastMCP 서버 엔트리포인트 (스텁).
+"""FastMCP 서버 엔트리포인트 (스텁).
 Phase 2와 Phase 3 사이에서 유닛 테스트와 통합 테스트를 원활하게 진행하기 위해 뼈대만 작성합니다.
 """
+
 from __future__ import annotations
 
 import logging

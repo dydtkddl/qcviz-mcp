@@ -1,12 +1,10 @@
-# -*- coding: utf-8 -*-
 """compute_partial_charges 도구 테스트."""
-import json
+
 import pytest
 
 pyscf = pytest.importorskip("pyscf")
 
 from qcviz_mcp.tools.core import compute_partial_charges
-
 
 WATER = "O 0 0 0; H 0 0.757 0.587; H 0 -0.757 0.587"
 METHANE = "C 0 0 0; H 0.629 0.629 0.629; H -0.629 -0.629 0.629; H -0.629 0.629 -0.629; H 0.629 -0.629 -0.629"

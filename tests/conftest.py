@@ -1,25 +1,33 @@
-"""
-pytest 공통 픽스처 및 설정 파일.
-"""
 from __future__ import annotations
 
-import os
-from pathlib import Path
 import pytest
+import tempfile
+from pathlib import Path
 
+
+# ── Phase η markers ──
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
+    config.addinivalue_line("markers", "network: marks tests requiring network access")
+    config.addinivalue_line("markers", "pyvista: marks tests requiring PyVista")
+
+
+# ── Shared fixtures ──
 @pytest.fixture
 def sample_water_xyz() -> str:
-    """물 분자(H2O)의 XYZ 좌표 형식 문자열을 반환합니다."""
+    """Water molecule XYZ string."""
     return """3
-Water structure
-O          0.00000        0.00000        0.11730
-H          0.00000        0.75720       -0.46920
-H          0.00000       -0.75720       -0.46920
+water
+O   0.000000   0.000000   0.117300
+H   0.000000   0.757200   -0.469200
+H   0.000000  -0.757200   -0.469200
 """
 
+
 @pytest.fixture
-def tmp_output_dir(tmp_path: Path) -> Path:
-    """테스트용 임시 디렉토리를 반환합니다."""
-    output_dir = tmp_path / "output"
-    output_dir.mkdir(exist_ok=True)
-    return output_dir
+def tmp_output_dir() -> Path:
+    """Create a temporary directory for test outputs."""
+    d = Path(tempfile.gettempdir()) / "qcviz_test_output"
+    d.mkdir(parents=True, exist_ok=True)
+    return d

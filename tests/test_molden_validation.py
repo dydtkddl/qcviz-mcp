@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 """Molden 내보내기 + IBO 검증 테스트."""
+
 import os
+
 import pytest
-import numpy as np
 
 pyscf = pytest.importorskip("pyscf")
 
@@ -16,7 +16,7 @@ class TestMoldenExport:
     """Molden 내보내기 테스트."""
 
     def test_export_ibo_water_molden(self, tmp_path):
-        """water sto-3g → IBO .molden 파일 생성."""
+        """Water sto-3g → IBO .molden 파일 생성."""
         scf_res, mol = backend.compute_scf(WATER, basis="sto-3g")
         iao_res = backend.compute_iao(scf_res, mol)
         ibo_res = backend.compute_ibo(scf_res, iao_res, mol)
@@ -30,7 +30,7 @@ class TestMoldenExport:
         assert "[MO]" in content
 
     def test_export_canonical_molden(self, tmp_path):
-        """canonical MO → .molden."""
+        """Canonical MO → .molden."""
         scf_res, mol = backend.compute_scf(WATER, basis="sto-3g")
         molden_path = str(tmp_path / "water_canonical.molden")
         backend.export_molden(mol, scf_res.mo_coeff, molden_path)
@@ -55,7 +55,7 @@ class TestIBOValidation:
     """IBO 품질 검증 테스트."""
 
     def test_water_spread(self):
-        """water sto-3g IBO spread < 5.0 Å² (보수적 기준)."""
+        """Water sto-3g IBO spread < 5.0 Å² (보수적 기준)."""
         from qcviz_mcp.validation import compute_orbital_spread
 
         scf_res, mol = backend.compute_scf(WATER, basis="sto-3g")
@@ -89,6 +89,7 @@ class TestIBOValidation:
 
         # Mulliken charges
         from pyscf import scf as pyscf_scf
+
         mf = pyscf_scf.RHF(mol).run()
         _, mulliken_chg = mf.mulliken_pop(verbose=0)
 

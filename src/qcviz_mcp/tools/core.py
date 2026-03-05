@@ -1,22 +1,22 @@
-# -*- coding: utf-8 -*-
-"""
-QCViz-MCP의 6가지 핵심 도구(Tools) 구현 및 FastMCP 서버 등록.
-"""
+"""QCViz-MCP의 6가지 핵심 도구(Tools) 구현 및 FastMCP 서버 등록."""
+
 from __future__ import annotations
 
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from qcviz_mcp.mcp_server import mcp
-from qcviz_mcp.backends.registry import registry, BackendNotAvailableError
 from qcviz_mcp.backends.base import (
-    OrbitalBackend, ParserBackend, VisualizationBackend, StructureBackend
+    OrbitalBackend,
+    ParserBackend,
+    StructureBackend,
+    VisualizationBackend,
 )
+from qcviz_mcp.backends.registry import BackendNotAvailableError, registry
+from qcviz_mcp.mcp_server import mcp
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ def _validate_file_path(file_path: str, *, must_exist: bool = True) -> str:
     Raises:
         ValueError: 허용되지 않은 경로.
         FileNotFoundError: 파일 미존재 (must_exist=True일 때).
+
     """
     real_path = os.path.realpath(file_path)
     if not real_path.startswith(_PROJECT_ROOT):
@@ -58,6 +59,7 @@ def _validate_atom_spec(atom_spec: str, max_atoms: int = 200) -> str:
 
     Raises:
         ValueError: 원자 수 초과.
+
     """
     lines = atom_spec.strip().splitlines()
     try:
@@ -80,10 +82,10 @@ def _validate_atom_spec(atom_spec: str, max_atoms: int = 200) -> str:
 
 # ── 도구 구현 ──────────────────────────────────────────────────
 
+
 @mcp.tool()
 def compute_ibo(xyz_string: str, basis: str = "cc-pvdz", method: str = "RHF") -> str:
-    """
-    주어진 분자 구조의 SCF 계산을 수행하고 Intrinsic Bond Orbitals(IBO)를 계산합니다.
+    """주어진 분자 구조의 SCF 계산을 수행하고 Intrinsic Bond Orbitals(IBO)를 계산합니다.
     첫 번째 IBO에 대한 3D 시각화 HTML도 함께 생성합니다.
 
     Args:
@@ -93,11 +95,14 @@ def compute_ibo(xyz_string: str, basis: str = "cc-pvdz", method: str = "RHF") ->
 
     Returns:
         JSON 형태의 결과 문자열.
+
     """
     try:
         _validate_atom_spec(xyz_string)
         backend: OrbitalBackend = registry.get("pyscf")
-        scf_result, mol_obj = backend.compute_scf(xyz_string, basis=basis, method=method)
+        scf_result, mol_obj = backend.compute_scf(
+            xyz_string, basis=basis, method=method
+        )
         iao_result = backend.compute_iao(scf_result, mol_obj)
         ibo_result = backend.compute_ibo(scf_result, iao_result, mol_obj)
 
@@ -117,7 +122,9 @@ def compute_ibo(xyz_string: str, basis: str = "cc-pvdz", method: str = "RHF") ->
         # cube 생성 + HTML 렌더링 (시각화 백엔드가 있을 때만)
         try:
             cube_text = backend.generate_cube(
-                mol_obj, ibo_result.coefficients, orbital_index=0,
+                mol_obj,
+                ibo_result.coefficients,
+                orbital_index=0,
                 grid_points=(80, 80, 80),
             )
             viz_backend = registry.get("py3dmol")
@@ -136,17 +143,19 @@ def compute_ibo(xyz_string: str, basis: str = "cc-pvdz", method: str = "RHF") ->
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         logger.error("compute_ibo 실패: %s", str(e))
-        return json.dumps({
-            "status": "error",
-            "error": str(e),
-            "suggestion": "입력 분자 구조(XYZ 형식)를 확인하세요.",
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "error",
+                "error": str(e),
+                "suggestion": "입력 분자 구조(XYZ 형식)를 확인하세요.",
+            },
+            ensure_ascii=False,
+        )
 
 
 @mcp.tool()
 def visualize_orbital(xyz_string: str, orbital_type: str = "HOMO") -> str:
-    """
-    분자의 특정 오비탈(예: HOMO, LUMO)을 3D로 시각화합니다.
+    """분자의 특정 오비탈(예: HOMO, LUMO)을 3D로 시각화합니다.
 
     Args:
         xyz_string: 분자 구조 (XYZ 형식)
@@ -154,6 +163,7 @@ def visualize_orbital(xyz_string: str, orbital_type: str = "HOMO") -> str:
 
     Returns:
         오비탈을 렌더링하는 HTML 코드(문자열).
+
     """
     try:
         viz_backend: VisualizationBackend = registry.get("py3dmol")
@@ -166,14 +176,14 @@ def visualize_orbital(xyz_string: str, orbital_type: str = "HOMO") -> str:
 
 @mcp.tool()
 def parse_output(file_path: str) -> str:
-    """
-    양자화학 프로그램 출력 파일을 읽어 분석합니다.
+    """양자화학 프로그램 출력 파일을 읽어 분석합니다.
 
     Args:
         file_path: 출력 파일 경로 (프로젝트 디렉토리 내부만 허용)
 
     Returns:
         추출된 주요 데이터 요약.
+
     """
     try:
         validated_path = _validate_file_path(file_path)
@@ -195,9 +205,10 @@ def parse_output(file_path: str) -> str:
 
 
 @mcp.tool()
-def compute_partial_charges(xyz_string: str, basis: str = "sto-3g", method: str = "RHF") -> str:
-    """
-    IAO 기반 부분 전하를 계산합니다.
+def compute_partial_charges(
+    xyz_string: str, basis: str = "sto-3g", method: str = "RHF"
+) -> str:
+    """IAO 기반 부분 전하를 계산합니다.
 
     Args:
         xyz_string: 분자의 XYZ 좌표 문자열
@@ -206,11 +217,14 @@ def compute_partial_charges(xyz_string: str, basis: str = "sto-3g", method: str 
 
     Returns:
         각 원자의 부분 전하 목록.
+
     """
     try:
         _validate_atom_spec(xyz_string)
         backend: OrbitalBackend = registry.get("pyscf")
-        scf_result, mol_obj = backend.compute_scf(xyz_string, basis=basis, method=method)
+        scf_result, mol_obj = backend.compute_scf(
+            xyz_string, basis=basis, method=method
+        )
         iao_result = backend.compute_iao(scf_result, mol_obj)
 
         charges = iao_result.charges
@@ -227,8 +241,7 @@ def compute_partial_charges(xyz_string: str, basis: str = "sto-3g", method: str 
 
 @mcp.tool()
 def convert_format(input_path: str, output_path: str) -> str:
-    """
-    분자 구조 파일을 다른 형식으로 변환합니다.
+    """분자 구조 파일을 다른 형식으로 변환합니다.
 
     Args:
         input_path: 입력 파일의 경로 (프로젝트 디렉토리 내부)
@@ -236,6 +249,7 @@ def convert_format(input_path: str, output_path: str) -> str:
 
     Returns:
         변환 결과 상태 및 경로.
+
     """
     try:
         validated_input = _validate_file_path(input_path)
@@ -249,8 +263,7 @@ def convert_format(input_path: str, output_path: str) -> str:
 
 @mcp.tool()
 def analyze_bonding(xyz_string: str) -> str:
-    """
-    입력 분자의 IBO 기반 결합 특성을 분석합니다.
+    """입력 분자의 IBO 기반 결합 특성을 분석합니다.
     IAO 부분 전하와 IBO 점유 패턴으로 결합 구조를 보고합니다.
 
     Args:
@@ -258,11 +271,14 @@ def analyze_bonding(xyz_string: str) -> str:
 
     Returns:
         IBO 결합 분석 보고서.
+
     """
     try:
         _validate_atom_spec(xyz_string)
         backend: OrbitalBackend = registry.get("pyscf")
-        scf_result, mol_obj = backend.compute_scf(xyz_string, basis="sto-3g", method="hf")
+        scf_result, mol_obj = backend.compute_scf(
+            xyz_string, basis="sto-3g", method="hf"
+        )
         iao_result = backend.compute_iao(scf_result, mol_obj)
         ibo_result = backend.compute_ibo(scf_result, iao_result, mol_obj)
 
@@ -276,11 +292,11 @@ def analyze_bonding(xyz_string: str) -> str:
         ovlp = mol_obj.intor_symmetric("int1e_ovlp")
 
         report_lines = [
-            f"결합 특성 분석:",
+            "결합 특성 분석:",
             f"분자: {' '.join(symbols)} ({mol_obj.natm}개 원자)",
             f"총 {n_ibo}개 IBO 검출",
-            f"",
-            f"IAO 부분 전하:",
+            "",
+            "IAO 부분 전하:",
         ]
         for sym, chg in zip(symbols, charges):
             report_lines.append(f"  {sym}: {chg:+.4f}")
@@ -288,10 +304,10 @@ def analyze_bonding(xyz_string: str) -> str:
         report_lines.append(f"\nIBO 점유도: {ibo_result.occupations.tolist()}")
 
         # 각 IBO의 원자별 기여도 분석
-        report_lines.append(f"\nIBO별 원자 기여도:")
+        report_lines.append("\nIBO별 원자 기여도:")
         for i in range(n_ibo):
             coeff_i = ibo_coeff[:, i]
-            pop = (coeff_i ** 2) @ ovlp @ np.eye(len(coeff_i))
+            pop = (coeff_i**2) @ ovlp @ np.eye(len(coeff_i))
             # 원자별 합산
             atom_pop = np.zeros(mol_obj.natm)
             for j, label in enumerate(ao_labels):
@@ -299,7 +315,11 @@ def analyze_bonding(xyz_string: str) -> str:
             total = atom_pop.sum()
             if total > 0:
                 atom_pop /= total
-            dominant = [(symbols[k], atom_pop[k]) for k in range(mol_obj.natm) if atom_pop[k] > 0.05]
+            dominant = [
+                (symbols[k], atom_pop[k])
+                for k in range(mol_obj.natm)
+                if atom_pop[k] > 0.05
+            ]
             dominant_str = ", ".join(f"{s}({p:.0%})" for s, p in dominant)
             report_lines.append(f"  IBO-{i}: {dominant_str}")
 

@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
 """parse_output 도구 통합 테스트."""
+
 import os
-import pytest
 from pathlib import Path
+
+import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -13,7 +14,7 @@ class TestParseOutput:
     def test_parse_orca_mock(self):
         """ORCA mock 출력 파싱."""
         pytest.importorskip("cclib")
-        from qcviz_mcp.tools.core import parse_output, _PROJECT_ROOT
+        from qcviz_mcp.tools.core import parse_output
 
         orca_file = FIXTURES_DIR / "water_orca_mock.out"
         if not orca_file.exists():
@@ -37,7 +38,7 @@ class TestParseOutput:
 
     def test_parse_nonexistent_file(self):
         """존재하지 않는 파일 → 에러 메시지."""
-        from qcviz_mcp.tools.core import parse_output, _PROJECT_ROOT
+        from qcviz_mcp.tools.core import _PROJECT_ROOT, parse_output
 
         fake_path = os.path.join(_PROJECT_ROOT, "tests", "fixtures", "nonexistent.out")
         result = parse_output(fake_path)
@@ -53,7 +54,7 @@ class TestParseOutput:
     def test_parse_empty_file(self):
         """빈 파일 → graceful 에러."""
         pytest.importorskip("cclib")
-        from qcviz_mcp.tools.core import parse_output, _PROJECT_ROOT
+        from qcviz_mcp.tools.core import _PROJECT_ROOT, parse_output
 
         empty_file = os.path.join(_PROJECT_ROOT, "tests", "fixtures", "_empty_test.out")
         try:

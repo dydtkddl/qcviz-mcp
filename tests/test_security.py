@@ -1,7 +1,8 @@
-# -*- coding: utf-8 -*-
 """보안 테스트: 경로 검증 및 입력 크기 제한."""
+
 import pytest
-from qcviz_mcp.tools.core import _validate_file_path, _validate_atom_spec
+
+from qcviz_mcp.tools.core import _validate_atom_spec, _validate_file_path
 
 
 def test_path_traversal_blocked():

@@ -1,18 +1,16 @@
-# -*- coding: utf-8 -*-
-"""
-헤드리스 PNG 내보내기.
+"""헤드리스 PNG 내보내기.
 Playwright + Chromium + SwiftShader로 py3Dmol HTML → PNG 캡처.
 
 선택적 의존성: pip install playwright && playwright install chromium
 """
+
 import asyncio
 from pathlib import Path
-from typing import Optional
 
 
 async def html_to_png(
     html_path: str,
-    png_path: Optional[str] = None,
+    png_path: str | None = None,
     width: int = 800,
     height: int = 600,
     wait_ms: int = 3000,
@@ -30,6 +28,7 @@ async def html_to_png(
 
     Returns:
         dict: {success, png_path, width, height, file_size_bytes, error}.
+
     """
     try:
         from playwright.async_api import async_playwright
