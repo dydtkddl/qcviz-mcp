@@ -262,5 +262,30 @@ class PySCFBackend(OrbitalBackend):
             if tmp_path and os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    def export_molden(
+        self,
+        mol_obj: Any,
+        mo_coeff: np.ndarray,
+        output_path: str,
+    ) -> str:
+        """IBO/IAO/canonical 궤도를 Molden 포맷으로 내보내기.
+
+        Args:
+            mol_obj: PySCF Mole 객체.
+            mo_coeff: 궤도 계수 행렬 (n_ao, n_orb).
+            output_path: 출력 .molden 파일 경로.
+
+        Returns:
+            str: 생성된 Molden 파일의 절대 경로.
+        """
+        if not _HAS_PYSCF:
+            raise ImportError("PySCF가 설치되지 않았습니다.")
+
+        from pyscf.tools import molden as molden_mod
+
+        molden_mod.from_mo(mol_obj, output_path, mo_coeff)
+        logger.info("Molden 파일 생성: %s (%d orbitals)", output_path, mo_coeff.shape[1])
+        return str(Path(output_path).resolve())
+
 # 모듈 로딩 시 레지스트리에 자동 등록 (사용 가능한 경우에만)
 registry.register(PySCFBackend)

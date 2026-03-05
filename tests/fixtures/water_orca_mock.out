@@ -1,0 +1,30 @@
+
+                                 *****************
+                                 * O   R   C   A *
+                                 *****************
+
+                         --- QCViz Mock ORCA Output ---
+                         (NOT a real calculation)
+
+  Basis set information
+  ---------------------
+  Basis:                     STO-3G
+  Number of basis functions  ...         7
+
+  -Total SCF ENERGY       ...        -74.96306328
+
+  ----------------------
+  MULLIKEN ATOMIC CHARGES
+  ----------------------
+     0 O :   -0.470600
+     1 H :    0.235300
+     2 H :    0.235300
+  Sum of Mulliken Charges =    0.00000
+
+  CARTESIAN COORDINATES (ANGSTROEM)
+  ---------------------------------
+    O      0.000000    0.000000    0.117300
+    H      0.000000    0.757200   -0.469200
+    H      0.000000   -0.757200   -0.469200
+
+                                 *****END OF INPUT*****

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qcviz-mcp"
-version = "0.3.0-alpha"
+version = "0.4.0-alpha"
 description = "A Model Context Protocol Server for Quantum Chemistry Visualization and Electronic Structure Analysis"
 readme = "README.md"
 authors = [

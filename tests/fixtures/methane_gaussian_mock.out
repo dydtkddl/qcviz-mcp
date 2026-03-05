@@ -1,0 +1,30 @@
+ Entering Gaussian System, Link 0=g16
+ Initial command: mock gaussian output
+
+ ******************************************
+ Gaussian 16:  Mock Water Calculation
+ ******************************************
+
+ %chk=water.chk
+ # HF/STO-3G
+
+ Water molecule
+
+ 0 1
+ O     0.000000     0.000000     0.117300
+ H     0.000000     0.757200    -0.469200
+ H     0.000000    -0.757200    -0.469200
+
+ NAtoms=      3
+ NBasis=      7
+
+ SCF Done:  E(RHF) =  -74.9630633     A.U. after    8 cycles
+
+ Mulliken charges:
+               1
+     1  O   -0.470600
+     2  H    0.235300
+     3  H    0.235300
+ Sum of Mulliken Charges =   0.00000
+
+ Normal termination of Gaussian 16
