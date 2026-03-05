@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A Model Context Protocol Server for Quantum Chemistry Visualization and Electronic Structure Analysis"
 readme = "README.md"
 authors = [
-    {name = "본인이름", email = "dydtkddhkdwk@gmail.com"}
+    {name = "Yongsang An", email = "yongsang.an@khu.ac.kr"}
 ]
 license = {text = "BSD-3-Clause"}
 classifiers = [
