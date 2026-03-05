@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "qcviz-mcp": {
+      "command": "python",
+      "args": [
+        "-m",
+        "qcviz_mcp.mcp_server"
+      ],
+      "env": {
+        "PYTHONPATH": "src"
+      }
+    }
+  }
+}

@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qcviz-mcp"
+version = "0.1.0"
+description = "A Model Context Protocol Server for Quantum Chemistry Visualization and Electronic Structure Analysis"
+readme = "README.md"
+authors = [
+    {name = "User", email = "user@example.com"}
+]
+license = {text = "BSD-3-Clause"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=3.0,<4.0",
+    "numpy>=1.24",
+    "typing-extensions>=4.0",
+]
+
+[project.optional-dependencies]
+compute = ["pyscf>=2.4"]
+parse = ["cclib>=1.8"]
+viz = ["py3Dmol>=2.0"]
+structure = ["ase>=3.22"]
+all = ["pyscf>=2.4", "cclib>=1.8", "py3Dmol>=2.0", "ase>=3.22"]
+dev = [
+    "qcviz-mcp[all]",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+]
+dev-no-pyscf = [
+    "cclib>=1.8",
+    "py3Dmol>=2.0",
+    "ase>=3.22",
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+docs = [
+    "mkdocs>=1.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/user/qcviz-mcp"
+Repository = "https://github.com/user/qcviz-mcp"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "D", "UP", "B"]
+ignore = ["D100", "D104", "D203", "D213"] # Avoid docstring styling conflicts
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
