@@ -1,23 +1,32 @@
 # Changelog
 
+## [0.5.0-alpha] — 2026-03-05
+
+### Added
+
+- Transition metal support: `_resolve_minao()` auto-fallback from MINAO to STO-3G for ECP systems
+- Full UHF IBO support: `compute_scf_flexible()`, `compute_iao_uhf()`, `compute_ibo_uhf()`, `compute_uhf_charges()`
+- Headless PNG export via Playwright + SwiftShader (`renderers/png_exporter.py`, optional)
+- Fe(CO)₅ and TiCl₄ transition metal benchmark molecules (def2-SVP)
+- O₂ triplet and NO radical open-shell benchmark molecules
+- `minao` parameter for `compute_iao()`
+- `png` optional dependency group in pyproject.toml
+
+### Changed
+
+- `compute_iao()` now accepts `minao` parameter with ECP auto-detection
+- benchmark/molecules.py: added TRANSITION_METAL_MOLECULES and OPEN_SHELL_MOLECULES
+
 ## [0.4.0-alpha] — 2026-03-05
 
 ### Added
 
-- **parse_output**: real cclib-based parsing for ORCA/Gaussian/PySCF outputs
-- **compute_partial_charges**: IAO-based partial charge calculation tool (fully functional)
-- **convert_format**: ASE-based structure file conversion with security validation
-- **Molden export**: `export_molden` method for IBO/IAO/canonical orbitals (IboView compatible)
-- **IBO validation module**: orbital spread (σ²), Molden roundtrip, charge comparison
-- Test fixtures: ORCA mock, Gaussian mock, water.xyz
-- `test_parse_output.py` (5 tests), `test_partial_charges.py` (4), `test_convert_format.py` (4), `test_molden_validation.py` (6)
-- JOSS paper: all 6 required sections complete, comparison table, AI disclosure finalized
-- paper.bib: 11 references (Argonne MCP, El Agente, Löwdin, Anthropic MCP spec)
-
-### Changed
-
-- paper.md: 0 TODO markers remaining
-- Version bumped to 0.4.0-alpha
+- parse_output: real cclib-based parsing for ORCA/Gaussian/PySCF outputs
+- compute_partial_charges: IAO-based partial charge calculation tool
+- convert_format: ASE-based structure file conversion with security validation
+- Molden export: `export_molden` for IBO/IAO/canonical orbitals (IboView compatible)
+- IBO validation module: orbital spread (σ²), Molden roundtrip, charge comparison
+- JOSS paper: all 6 required sections complete, AI disclosure finalized
 
 ## [0.3.0-alpha] — 2026-03-05
 

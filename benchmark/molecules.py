@@ -126,4 +126,42 @@ UHF_MOLECULES: list[BenchmarkMolecule] = [
         spin=2,
         charge=0,
     ),
+    BenchmarkMolecule(
+        name="no_radical",
+        atom_spec="N 0 0 0; O 0 0 1.151",
+        basis_sets=("sto-3g",),
+        expected_n_ibo=0,
+        description="NO radical doublet (spin=1). UHF required",
+        spin=1,
+        charge=0,
+    ),
+]
+
+# ═══ 전이금속 벤치마크 (Phase ζ) ═══
+TRANSITION_METAL_MOLECULES: list[BenchmarkMolecule] = [
+    BenchmarkMolecule(
+        name="feco5",
+        atom_spec=(
+            "Fe  0.000  0.000  0.000; "
+            "C   0.000  0.000  1.830; O   0.000  0.000  2.996; "
+            "C   1.830  0.000  0.000; O   2.996  0.000  0.000; "
+            "C  -1.830  0.000  0.000; O  -2.996  0.000  0.000; "
+            "C   0.000  1.830  0.000; O   0.000  2.996  0.000; "
+            "C   0.000 -1.830  0.000; O   0.000 -2.996  0.000"
+        ),
+        basis_sets=("def2-svp",),
+        expected_n_ibo=0,  # 범위(20~35)로 별도 검증
+        description="Fe(CO)5 iron pentacarbonyl. All-electron def2-SVP",
+    ),
+    BenchmarkMolecule(
+        name="ticl4",
+        atom_spec=(
+            "Ti  0.000  0.000  0.000; "
+            "Cl  1.280  1.280  1.280; Cl -1.280 -1.280  1.280; "
+            "Cl -1.280  1.280 -1.280; Cl  1.280 -1.280 -1.280"
+        ),
+        basis_sets=("def2-svp",),
+        expected_n_ibo=0,  # 범위(18~30)로 별도 검증
+        description="TiCl4 tetrahedral. All-electron def2-SVP",
+    ),
 ]

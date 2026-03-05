@@ -123,13 +123,28 @@ class PySCFBackend(OrbitalBackend):
             method=method,
         ), mol
 
-    def compute_iao(self, scf_result: SCFResult, mol_obj: Any) -> IAOResult:
+    def _resolve_minao(self, mol, minao='minao'):
+        """ECP 감지 시 minao 자동 폴백."""
+        warnings = []
+        effective = minao
+        if hasattr(mol, 'has_ecp') and mol.has_ecp() and minao == 'minao':
+            effective = 'sto-3g'
+            warnings.append(
+                "ECP detected. Switched IAO reference basis from 'minao' to 'sto-3g'. "
+                "For best results with transition metals, use all-electron "
+                "basis (e.g., def2-SVP) without ECP."
+            )
+        return effective, warnings
+
+    def compute_iao(self, scf_result: SCFResult, mol_obj: Any, minao: str = "minao") -> IAOResult:
         if not _HAS_PYSCF:
             raise ImportError("PySCF가 설치되지 않았습니다.")
 
+        effective_minao, _ = self._resolve_minao(mol_obj, minao)
+
         # 점유 오비탈 추출
         orbocc = scf_result.mo_coeff[:, scf_result.mo_occ > 0]
-        iao_coeff = lo.iao.iao(mol_obj, orbocc)
+        iao_coeff = lo.iao.iao(mol_obj, orbocc, minao=effective_minao)
         
         charges = self._compute_iao_charges(mol_obj, scf_result, iao_coeff)
 
@@ -268,16 +283,7 @@ class PySCFBackend(OrbitalBackend):
         mo_coeff: np.ndarray,
         output_path: str,
     ) -> str:
-        """IBO/IAO/canonical 궤도를 Molden 포맷으로 내보내기.
-
-        Args:
-            mol_obj: PySCF Mole 객체.
-            mo_coeff: 궤도 계수 행렬 (n_ao, n_orb).
-            output_path: 출력 .molden 파일 경로.
-
-        Returns:
-            str: 생성된 Molden 파일의 절대 경로.
-        """
+        """IBO/IAO/canonical 궤도를 Molden 포맷으로 내보내기."""
         if not _HAS_PYSCF:
             raise ImportError("PySCF가 설치되지 않았습니다.")
 
@@ -286,6 +292,76 @@ class PySCFBackend(OrbitalBackend):
         molden_mod.from_mo(mol_obj, output_path, mo_coeff)
         logger.info("Molden 파일 생성: %s (%d orbitals)", output_path, mo_coeff.shape[1])
         return str(Path(output_path).resolve())
+
+    # ── UHF/ROHF 지원 (Phase ζ-2) ──────────────────────────
+
+    def compute_scf_flexible(self, atom_spec: str, basis: str = "sto-3g",
+                             charge: int = 0, spin: int = 0):
+        """spin>0 시 UHF 자동 선택. (mf, mol) 튜플 반환."""
+        if not _HAS_PYSCF:
+            raise ImportError("PySCF가 설치되지 않았습니다.")
+        atom_spec = _parse_atom_spec(atom_spec)
+        mol = gto.M(atom=atom_spec, basis=basis, charge=charge, spin=spin, verbose=0)
+        if spin > 0:
+            mf = scf.UHF(mol)
+        else:
+            mf = scf.RHF(mol)
+        mf.kernel()
+        if not mf.converged:
+            raise RuntimeError(f"SCF not converged for spin={spin}")
+        return mf, mol
+
+    def compute_iao_uhf(self, mf, mol, minao: str = "minao"):
+        """UHF IAO: alpha/beta 스핀 채널 분리."""
+        effective, warnings = self._resolve_minao(mol, minao)
+        mo_a, mo_b = mf.mo_coeff
+        occ_a, occ_b = mf.mo_occ
+        mo_occ_a = mo_a[:, occ_a > 0]
+        mo_occ_b = mo_b[:, occ_b > 0]
+        iao_a = lo.iao.iao(mol, mo_occ_a, minao=effective)
+        iao_b = lo.iao.iao(mol, mo_occ_b, minao=effective)
+        return {
+            "alpha": {"iao_coeff": iao_a, "n_iao": iao_a.shape[1]},
+            "beta":  {"iao_coeff": iao_b, "n_iao": iao_b.shape[1]},
+            "is_uhf": True,
+            "minao_used": effective,
+            "warnings": warnings,
+        }
+
+    def compute_ibo_uhf(self, mf, iao_result, mol):
+        """UHF IBO: alpha/beta 각각 로컬라이즈."""
+        mo_a, mo_b = mf.mo_coeff
+        occ_a, occ_b = mf.mo_occ
+        mo_occ_a = mo_a[:, occ_a > 0]
+        mo_occ_b = mo_b[:, occ_b > 0]
+        ibo_a = lo.ibo.ibo(mol, mo_occ_a, iaos=iao_result["alpha"]["iao_coeff"])
+        ibo_b = lo.ibo.ibo(mol, mo_occ_b, iaos=iao_result["beta"]["iao_coeff"])
+        return {
+            "alpha": {"ibo_coeff": ibo_a, "n_ibo": ibo_a.shape[1]},
+            "beta":  {"ibo_coeff": ibo_b, "n_ibo": ibo_b.shape[1]},
+            "is_uhf": True,
+            "total_ibo": ibo_a.shape[1] + ibo_b.shape[1],
+        }
+
+    def compute_uhf_charges(self, mf, mol):
+        """UHF Mulliken 전하."""
+        dm = mf.make_rdm1()
+        s = mol.intor("int1e_ovlp")
+        dm_total = dm[0] + dm[1] if isinstance(dm, (list, tuple)) else dm
+        pop = np.einsum("ij,ji->i", dm_total, s)
+        charges = []
+        offset = 0
+        for ia in range(mol.natm):
+            nao_atom = sum(
+                (2 * mol.bas_angular(ib) + 1) * mol.bas_nctr(ib)
+                for ib in range(mol.nbas)
+                if mol.bas_atom(ib) == ia
+            )
+            q = mol.atom_charge(ia) - sum(pop[offset:offset + nao_atom])
+            charges.append(float(q))
+            offset += nao_atom
+        return charges
+
 
 # 모듈 로딩 시 레지스트리에 자동 등록 (사용 가능한 경우에만)
 registry.register(PySCFBackend)
