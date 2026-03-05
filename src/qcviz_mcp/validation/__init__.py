@@ -65,8 +65,16 @@ def verify_molden_roundtrip(
     """
     from pyscf.tools import molden
 
-    _, _, mo_energy, mo_coeff, _, _ = molden.load(molden_path)
+    mol2, mo_energy, mo_coeff, mo_occ, irrep_labels, spins = molden.load(molden_path)
 
+    if mo_coeff is None:
+        return {"frobenius_norm": float("inf"), "max_abs_diff": float("inf"), "passed": False}
+    if mo_coeff.ndim == 1:
+        mo_coeff = mo_coeff.reshape(-1, 1)
+    if mo_coeff is None:
+        return {"frobenius_norm": float("inf"), "max_abs_diff": float("inf"), "passed": False}
+    if mo_coeff.ndim == 1:
+        mo_coeff = mo_coeff.reshape(-1, 1)
     n_orb = min(original_coeff.shape[1], mo_coeff.shape[1])
 
     # 부호 자유도 보정: 각 열의 최대 절대값 원소의 부호를 맞춤
