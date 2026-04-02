@@ -1,5 +1,6 @@
 import sys
 import importlib
+import importlib.util
 from datetime import datetime, timezone
 from qcviz_mcp.mcp_server import mcp
 from qcviz_mcp.observability import metrics
@@ -35,14 +36,8 @@ async def health_check() -> dict:
     }
 
 def _detect_renderer() -> str:
-    try:
-        import pyvista
+    if importlib.util.find_spec("pyvista") is not None:
         return "pyvista"
-    except ImportError:
-        pass
-    try:
-        import playwright
+    if importlib.util.find_spec("playwright") is not None:
         return "playwright"
-    except ImportError:
-        pass
     return "py3dmol"

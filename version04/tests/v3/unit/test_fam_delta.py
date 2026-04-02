@@ -8,15 +8,21 @@ import pytest
 from fastapi import HTTPException
 
 from qcviz_mcp.llm.pipeline import QCVizPromptPipeline
+from qcviz_mcp.llm.schemas import PlanResponse
 from qcviz_mcp.llm.trace import PipelineTrace
 from qcviz_mcp.web.conversation_state import (
+    ActiveMolecule,
     build_canonical_result_key,
     build_execution_state,
+    clear_active_molecule,
     clear_result_index,
     find_previous_result,
+    get_active_molecule,
+    get_molecule_history,
     index_completed_result,
     load_conversation_state,
     save_conversation_state,
+    set_active_molecule,
 )
 from qcviz_mcp.web.routes import chat as chat_route
 from qcviz_mcp.web.routes import compute as compute_route
@@ -36,6 +42,39 @@ def test_pipeline_trace_to_log_dict_includes_failure_class():
     trace = PipelineTrace(trace_id="trace-1", failure_class="planner_error")
     payload = trace.to_log_dict()
     assert payload["failure_class"] == "planner_error"
+
+
+def test_pipeline_trace_to_log_dict_includes_context_tracking():
+    trace = PipelineTrace(
+        trace_id="trace-ctx",
+        context_molecule_name="methylethylamine",
+        context_molecule_smiles="CCNC",
+        implicit_follow_up_type="modification_request",
+        follow_up_detected=True,
+    )
+
+    payload = trace.to_log_dict()
+
+    assert payload["context_tracking"] == {
+        "active_molecule": "methylethylamine",
+        "implicit_follow_up": "modification_request",
+        "follow_up_detected": True,
+    }
+
+
+def test_plan_response_context_fields_blank_to_none():
+    parsed = PlanResponse.model_validate(
+        {
+            "intent": "analyze",
+            "context_molecule_name": "   ",
+            "context_molecule_smiles": "",
+            "implicit_follow_up_type": "modification_request",
+        }
+    )
+
+    assert parsed.context_molecule_name is None
+    assert parsed.context_molecule_smiles is None
+    assert parsed.implicit_follow_up_type == "modification_request"
 
 
 def test_pipeline_detailed_no_provider_reason(monkeypatch):
@@ -86,6 +125,77 @@ def test_conversation_state_builds_and_indexes_canonical_result_key():
     assert find_previous_result(session_id, expected) == "job-1"
     clear_result_index(session_id)
     assert find_previous_result(session_id, expected) is None
+
+
+def test_build_execution_state_includes_pending_active_molecule():
+    payload = {"session_id": f"pending-{time.time_ns()}", "structure_query": "benzene"}
+    result = {
+        "structure_name": "benzene",
+        "smiles": "c1ccccc1",
+        "formula": "C6H6",
+        "job_type": "analyze",
+    }
+
+    state = build_execution_state(payload, result, job_id="job-pending")
+
+    assert state["_pending_active_molecule"] == {
+        "canonical_name": "benzene",
+        "smiles": "c1ccccc1",
+        "formula": "C6H6",
+        "source": "compute_result",
+        "set_at_turn": 0,
+    }
+
+
+def test_active_molecule_crud_tracks_history(monkeypatch):
+    monkeypatch.setenv("QCVIZ_CONTEXT_TRACKING_ENABLED", "true")
+    session_id = f"active-molecule-{time.time_ns()}"
+
+    first: ActiveMolecule = {
+        "canonical_name": "methylethylamine",
+        "smiles": "CCNC",
+        "formula": "C3H9N",
+        "source": "test",
+        "set_at_turn": 1,
+    }
+    second: ActiveMolecule = {
+        "canonical_name": "diethylamine",
+        "smiles": "CCNCC",
+        "source": "test",
+        "set_at_turn": 2,
+    }
+
+    assert get_active_molecule(session_id) is None
+
+    set_active_molecule(session_id, first)
+    assert get_active_molecule(session_id) == first
+    assert get_molecule_history(session_id) == []
+
+    set_active_molecule(session_id, second)
+    assert get_active_molecule(session_id) == second
+    assert get_molecule_history(session_id) == [first]
+
+    clear_active_molecule(session_id)
+    assert get_active_molecule(session_id) is None
+    assert get_molecule_history(session_id) == [first]
+
+
+def test_active_molecule_set_is_noop_when_feature_flag_disabled(monkeypatch):
+    monkeypatch.setenv("QCVIZ_CONTEXT_TRACKING_ENABLED", "false")
+    session_id = f"active-molecule-flag-off-{time.time_ns()}"
+
+    set_active_molecule(
+        session_id,
+        {
+            "canonical_name": "water",
+            "smiles": "O",
+            "source": "test",
+            "set_at_turn": 1,
+        },
+    )
+
+    assert get_active_molecule(session_id) is None
+    assert get_molecule_history(session_id) == []
 
 
 def test_submit_or_reuse_job_reuses_completed_same_session_result():

@@ -17,16 +17,12 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from qcviz_mcp.llm.grounding_merge import (
-    SEMANTIC_OUTCOME_CUSTOM_ONLY_CLARIFICATION,
     SEMANTIC_OUTCOME_GROUNDED_DIRECT_ANSWER,
-    SEMANTIC_OUTCOME_GROUNDING_CLARIFICATION,
-    SEMANTIC_OUTCOME_SINGLE_CANDIDATE_CONFIRM,
     grounding_merge,
 )
 from qcviz_mcp.llm.lane_lock import LaneLock
 from qcviz_mcp.llm.normalizer import (
     _looks_like_locant_structure_name,
-    analyze_semantic_structure_query,
     analyze_structure_input,
     build_structure_hypotheses,
     detect_task_hint,
@@ -37,12 +33,17 @@ from qcviz_mcp.llm.normalizer import (
 )
 from qcviz_mcp.llm.routing_config import (
     GROUNDING_AUTO_ACCEPT_THRESHOLD,
+    MODIFICATION_MAX_CANDIDATES,
     PLAN_CONFIDENCE_THRESHOLD,
     TYPO_AUTO_PROMOTE_THRESHOLD,
 )
 from qcviz_mcp.llm.schemas import ClarificationField, ClarificationForm, ClarificationOption, SlotMergeResult
 from qcviz_mcp.web.auth_store import get_auth_user
-from qcviz_mcp.web.conversation_state import load_conversation_state, update_conversation_state
+from qcviz_mcp.web.conversation_state import (
+    get_active_molecule,
+    load_conversation_state,
+    update_conversation_state,
+)
 from qcviz_mcp.web.runtime_info import runtime_debug_info, runtime_fingerprint
 from qcviz_mcp.web.session_auth import bootstrap_or_validate_session, validate_session_token
 
@@ -61,6 +62,10 @@ from qcviz_mcp.web.routes.compute import (
     _safe_plan_message,
     _submit_or_reuse_job,
     get_job_manager,
+)
+from qcviz_mcp.security import (
+    validate_comparison_input,
+    validate_modification_input,
 )
 
 # FIX(M3): ko_aliases for follow-up structure detection
@@ -179,16 +184,27 @@ def _semantic_candidate_relevance_rank(query: str, candidate: Mapping[str, Any])
     score = 0
     exact_bonus = 0
 
-    if re.search(r"(?<![A-Za-z0-9])TNT(?![A-Za-z0-9])", cleaned, re.IGNORECASE):
-        if "trinitrotoluene" in haystack or "2,4,6-trinitrotoluene" in haystack or cid == 8376:
-            score += 100
-            exact_bonus = 1
-        elif "toluene" in haystack:
-            score += 10
-        elif "nitric acid" in haystack:
-            score += 5
-        else:
-            score -= 25
+    query_lc = cleaned.lower()
+    name_lc = name.lower()
+    label_lc = label.lower()
+    if query_lc and query_lc in {name_lc, label_lc}:
+        score += 100
+        exact_bonus = 1
+    elif query_lc and (query_lc in name_lc or query_lc in label_lc):
+        score += 40
+
+    query_tokens = {
+        token for token in re.findall(r"[a-z0-9]+", query_lc)
+        if len(token) >= 2
+    }
+    if query_tokens:
+        haystack_tokens = set(re.findall(r"[a-z0-9]+", haystack))
+        score += 8 * len(query_tokens & haystack_tokens)
+
+    if cid is not None:
+        cid_text = str(cid).strip()
+        if cid_text and cid_text in query_lc:
+            score += 20
 
     return (-score, -exact_bonus, -confidence, name.lower())
 
@@ -404,6 +420,45 @@ def _plan_is_chat_only(plan: Optional[Mapping[str, Any]]) -> bool:
     if explanation_intent and not compute_intent:
         return True
     return False
+
+
+def _plan_is_modification_exploration(plan: Optional[Mapping[str, Any]]) -> bool:
+    if not plan:
+        return False
+    lane = _safe_str(
+        (plan or {}).get("planner_lane")
+        or (plan or {}).get("query_kind")
+        or (plan or {}).get("lane")
+    ).lower()
+    return lane == "modification_exploration"
+
+
+def _extract_modification_request_state(
+    session_id: str,
+    plan: Optional[Mapping[str, Any]],
+    *,
+    manager: Optional[Any] = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    active_molecule = get_active_molecule(session_id, manager=manager) or {}
+    plan_dict = dict(plan or {})
+    if not active_molecule:
+        context_name = _safe_str(
+            plan_dict.get("context_molecule_name")
+            or plan_dict.get("structure_query")
+            or plan_dict.get("molecule_name")
+        )
+        context_smiles = _safe_str(plan_dict.get("context_molecule_smiles"))
+        if context_name or context_smiles:
+            active_molecule = {
+                "canonical_name": context_name or "molecule",
+                "smiles": context_smiles,
+            }
+    modification_intent = plan_dict.get("modification_intent")
+    if hasattr(modification_intent, "model_dump"):
+        return active_molecule, dict(modification_intent.model_dump(exclude_none=True))
+    if isinstance(modification_intent, Mapping):
+        return active_molecule, dict(modification_intent)
+    return active_molecule, {}
 
 
 def _resolve_chat_response(plan: Optional[Mapping[str, Any]], message: str, *, history: Optional[List[Dict[str, str]]] = None) -> str:
@@ -859,7 +914,7 @@ _COMPOSITE_HINT_RE = re.compile(
 )
 
 
-def _postvalidate_plan_confidence(plan: Dict[str, Any]) -> Dict[str, Any]:
+def _postvalidate_plan_confidence(plan: Dict[str, Any], *, raw_message: str = "") -> Dict[str, Any]:
     """Downshift overconfident compute plans for typo-like structure strings."""
     from qcviz_mcp.services.structure_resolver import (
         CHEM_ABBREVIATIONS,
@@ -871,13 +926,49 @@ def _postvalidate_plan_confidence(plan: Dict[str, Any]) -> Dict[str, Any]:
     structure_query = _safe_str(adjusted.get("structure_query"))
     confidence = float(adjusted.get("confidence", 0.0) or 0.0)
     query_kind = _safe_str(adjusted.get("query_kind"))
-    if query_kind == "chat_only" or not structure_query:
-        return adjusted
-
     sq_lower = structure_query.lower()
     known_lower = {name.lower() for name in _KNOWN_MOLECULE_NAMES}
     abbrev_lower = {name.lower() for name in CHEM_ABBREVIATIONS.keys()}
     auto_accept_local_aliases = {"aminobutylic acid", "aminobutyric acid"}
+    raw_probe = _safe_str(raw_message) or _safe_str(adjusted.get("raw_input"))
+    raw_task_hint = _safe_str(detect_task_hint(raw_probe)).lower() if raw_probe else ""
+    if raw_task_hint and raw_task_hint not in {"chat"}:
+        raw_probe = ""
+
+    raw_fuzzy_candidates = (
+        _fuzzy_rescue_candidates(raw_probe, cutoff=0.7, n=3)
+        if raw_probe and raw_probe.lower() not in known_lower and raw_probe.lower() not in abbrev_lower
+        else []
+    )
+    if raw_fuzzy_candidates:
+        adjusted["confidence"] = min(confidence, 0.65)
+        adjusted["confidence_band"] = "medium"
+        adjusted["needs_clarification"] = True
+        adjusted["clarification_kind"] = "typo_suspicion"
+        adjusted["typo_candidates"] = raw_fuzzy_candidates
+        missing_slots = list(adjusted.get("missing_slots") or [])
+        if "structure_query" not in missing_slots:
+            missing_slots.append("structure_query")
+        adjusted["missing_slots"] = missing_slots
+        return adjusted
+
+    if not structure_query:
+        probe_text = _safe_str(adjusted.get("raw_input") or adjusted.get("normalized_text"))
+        fuzzy_candidates = _fuzzy_rescue_candidates(probe_text, cutoff=0.7, n=3) if probe_text else []
+        if fuzzy_candidates:
+            adjusted["confidence"] = min(confidence, 0.65)
+            adjusted["confidence_band"] = "medium"
+            adjusted["needs_clarification"] = True
+            adjusted["clarification_kind"] = "typo_suspicion"
+            adjusted["typo_candidates"] = fuzzy_candidates
+            missing_slots = list(adjusted.get("missing_slots") or [])
+            if "structure_query" not in missing_slots:
+                missing_slots.append("structure_query")
+            adjusted["missing_slots"] = missing_slots
+        return adjusted
+
+    if query_kind == "chat_only":
+        return adjusted
 
     if sq_lower in known_lower or sq_lower in abbrev_lower or sq_lower in auto_accept_local_aliases:
         return adjusted
@@ -923,7 +1014,7 @@ def _build_validated_plan(raw_message: str, payload: Mapping[str, Any]) -> Dict[
     plan = _safe_plan_message(raw_message, payload) if raw_message else {}
     if not plan:
         return {}
-    return _postvalidate_plan_confidence(plan)
+    return _postvalidate_plan_confidence(plan, raw_message=raw_message)
 
 
 async def _probe_verified_typo_candidates(
@@ -2231,6 +2322,78 @@ async def _ws_send(websocket: WebSocket, event_type: str, **payload: Any) -> Non
     await websocket.send_json(body)
 
 
+def _modification_lane_enabled() -> bool:
+    return os.getenv("QCVIZ_MODIFICATION_LANE_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
+
+
+def _comparison_enabled() -> bool:
+    return os.getenv("QCVIZ_COMPARISON_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
+
+
+def _comparison_targets_from_action_plan(action_plan: Any) -> List[str]:
+    comparison: Any = None
+    if isinstance(action_plan, Mapping):
+        comparison = action_plan.get("comparison")
+    elif hasattr(action_plan, "comparison"):
+        comparison = getattr(action_plan, "comparison")
+
+    if comparison is None:
+        return []
+
+    targets: List[Any] = []
+    if isinstance(comparison, Mapping):
+        targets = list(comparison.get("targets") or [])
+    elif hasattr(comparison, "targets"):
+        try:
+            targets = list(getattr(comparison, "targets") or [])
+        except Exception:
+            targets = []
+
+    out: List[str] = []
+    for item in targets:
+        token = _safe_str(item)
+        if token:
+            out.append(token)
+        if len(out) >= 2:
+            break
+    return out
+
+
+def _comparison_requested(action_plan: Any) -> bool:
+    def _as_bool(value: Any) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return bool(value)
+
+    comparison: Any = None
+    if isinstance(action_plan, Mapping):
+        comparison = action_plan.get("comparison")
+    elif hasattr(action_plan, "comparison"):
+        comparison = getattr(action_plan, "comparison")
+    if comparison is None:
+        return False
+
+    enabled = False
+    if isinstance(comparison, Mapping):
+        enabled = _as_bool(comparison.get("enabled"))
+    elif hasattr(comparison, "enabled"):
+        enabled = _as_bool(getattr(comparison, "enabled"))
+
+    return enabled and len(_comparison_targets_from_action_plan(action_plan)) >= 2
+
+
 async def _ws_send_error(
     websocket: WebSocket, *,
     message: str, detail: Optional[Any] = None,
@@ -2244,6 +2407,221 @@ async def _ws_send_error(
         "timestamp": _now_ts(),
     }
     await _ws_send(websocket, "error", session_id=session_id, error=error_obj, **extra)
+
+
+async def _handle_modification_exploration(
+    websocket: WebSocket,
+    *,
+    session_id: str,
+    plan: Mapping[str, Any],
+    active_molecule: Mapping[str, Any],
+    modification_intent: Mapping[str, Any],
+    turn_id: Optional[str] = None,
+) -> None:
+    try:
+        from qcviz_mcp.services.structure_intelligence import (
+            _RDKIT_AVAILABLE,
+            generate_modification_candidates,
+        )
+    except ImportError:
+        await _ws_send(
+            websocket,
+            "assistant",
+            session_id=session_id,
+            message="Structure modification preview is not available in this build.",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    base_smiles = _safe_str(active_molecule.get("smiles"))
+    base_name = (
+        _safe_str(active_molecule.get("canonical_name"))
+        or _safe_str(plan.get("context_molecule_name"))
+        or "molecule"
+    )
+    from_group = _safe_str(modification_intent.get("from_group")).lower()
+    to_group = _safe_str(modification_intent.get("to_group")).lower()
+
+    try:
+        validate_modification_input(from_group, to_group, base_smiles)
+    except Exception as exc:
+        await _ws_send(
+            websocket,
+            "error",
+            session_id=session_id,
+            message=f"입력 검증 실패: {exc}",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    if not _RDKIT_AVAILABLE:
+        await _ws_send(
+            websocket,
+            "assistant",
+            session_id=session_id,
+            message="Structure modification preview requires RDKit, but RDKit is not installed in this environment.",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    if not base_smiles:
+        await _ws_send(
+            websocket,
+            "assistant",
+            session_id=session_id,
+            message="I need a base molecule with a stored SMILES string before I can explore substituent changes.",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    if not from_group or not to_group:
+        await _ws_send(
+            websocket,
+            "assistant",
+            session_id=session_id,
+            message="Please specify which substituent to replace and which substituent to insert.",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    try:
+        candidates = generate_modification_candidates(
+            base_smiles,
+            from_group,
+            to_group,
+            max_candidates=MODIFICATION_MAX_CANDIDATES,
+        )
+    except Exception as exc:
+        logger.warning("Modification candidate generation failed: %s", exc)
+        candidates = []
+
+    if not candidates:
+        await _ws_send(
+            websocket,
+            "assistant",
+            session_id=session_id,
+            message=f"I could not find a valid {from_group} -> {to_group} replacement site for {base_name}.",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    await _ws_send(
+        websocket,
+        "modification_candidates",
+        session_id=session_id,
+        base_molecule={
+            "name": base_name,
+            "smiles": base_smiles,
+        },
+        from_group=from_group,
+        to_group=to_group,
+        candidates=candidates,
+        message=f"Found {len(candidates)} candidate structures for {base_name} ({from_group} -> {to_group}).",
+        plan=_public_plan_dict(plan),
+        turn_id=turn_id,
+        timestamp=_now_ts(),
+    )
+    logger.info(
+        "Modification candidates sent: session=%s base=%s %s->%s count=%d",
+        session_id,
+        base_name,
+        from_group,
+        to_group,
+        len(candidates),
+    )
+
+
+async def _handle_comparison_request(
+    websocket: WebSocket,
+    *,
+    session_id: str,
+    plan: Mapping[str, Any],
+    action_plan: Any,
+    turn_id: Optional[str] = None,
+) -> None:
+    targets = _comparison_targets_from_action_plan(action_plan)[:2]
+    if len(targets) < 2:
+        await _ws_send(
+            websocket,
+            "clarify",
+            session_id=session_id,
+            message="비교하려면 두 개의 분자가 필요합니다. 어떤 분자들을 비교할까요?",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    try:
+        validate_comparison_input(targets[0], targets[1])
+    except Exception as exc:
+        await _ws_send(
+            websocket,
+            "error",
+            session_id=session_id,
+            message=f"비교 요청 검증 실패: {exc}",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    await _ws_send(
+        websocket,
+        "comparison_started",
+        session_id=session_id,
+        targets=targets,
+        message=f"'{targets[0]}'와(과) '{targets[1]}'의 비교 계산을 시작합니다...",
+        turn_id=turn_id,
+        timestamp=_now_ts(),
+    )
+
+    base_payload = {
+        "job_type": _safe_str(plan.get("job_type"), "analyze") or "analyze",
+        "method": plan.get("method"),
+        "basis": plan.get("basis"),
+        "charge": plan.get("charge", 0),
+        "multiplicity": plan.get("multiplicity", 1),
+        "session_id": session_id,
+    }
+    payload_a = {**base_payload, "structure_query": targets[0]}
+    payload_b = {**base_payload, "structure_query": targets[1]}
+
+    try:
+        from qcviz_mcp.web.routes.compute import _run_comparison_compute
+
+        result = await asyncio.to_thread(
+            _run_comparison_compute,
+            payload_a,
+            payload_b,
+            job_type=base_payload["job_type"],
+        )
+        await _ws_send(
+            websocket,
+            "comparison_result",
+            session_id=session_id,
+            result=result,
+            message=(
+                f"'{targets[0]}'와(과) '{targets[1]}'의 "
+                f"비교 분석이 완료되었습니다."
+            ),
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+    except Exception as exc:
+        logger.exception("Comparison compute failed")
+        await _ws_send(
+            websocket,
+            "error",
+            session_id=session_id,
+            message=f"비교 계산 중 오류가 발생했습니다: {exc}",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
 
 
 async def _stream_backend_job_until_terminal(
@@ -2643,6 +3021,34 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     prepared["owner_username"] = auth_user["username"]
                     prepared["owner_display_name"] = auth_user.get("display_name") or auth_user["username"]
 
+                if _modification_lane_enabled() and _plan_is_modification_exploration(merge_state.get("plan")):
+                    manager = get_job_manager()
+                    active_molecule, modification_intent = _extract_modification_request_state(
+                        session_id,
+                        merge_state.get("plan"),
+                        manager=manager,
+                    )
+                    await _handle_modification_exploration(
+                        websocket,
+                        session_id=session_id,
+                        plan=merge_state.get("plan") or {},
+                        active_molecule=active_molecule,
+                        modification_intent=modification_intent,
+                        turn_id=merge_state.get("turn_id") or turn_id,
+                    )
+                    continue
+
+                merge_action_plan = dict((merge_state.get("plan") or {}).get("action_plan") or {})
+                if _comparison_enabled() and _comparison_requested(merge_action_plan):
+                    await _handle_comparison_request(
+                        websocket,
+                        session_id=session_id,
+                        plan=merge_state.get("plan") or {},
+                        action_plan=merge_action_plan,
+                        turn_id=merge_state.get("turn_id") or turn_id,
+                    )
+                    continue
+
                 await _ws_send(
                     websocket,
                     "assistant",
@@ -2800,6 +3206,33 @@ async def websocket_chat(websocket: WebSocket) -> None:
             except Exception as exc:
                 logger.warning("Plan generation failed: %s", exc)
                 plan = {}
+            if _modification_lane_enabled() and _plan_is_modification_exploration(plan):
+                manager = get_job_manager()
+                active_molecule, modification_intent = _extract_modification_request_state(
+                    session_id,
+                    plan,
+                    manager=manager,
+                )
+                await _handle_modification_exploration(
+                    websocket,
+                    session_id=session_id,
+                    plan=plan,
+                    active_molecule=active_molecule,
+                    modification_intent=modification_intent,
+                    turn_id=turn_id,
+                )
+                continue
+
+            action_plan = dict((plan or {}).get("action_plan") or {})
+            if _comparison_enabled() and _comparison_requested(action_plan):
+                await _handle_comparison_request(
+                    websocket,
+                    session_id=session_id,
+                    plan=plan,
+                    action_plan=action_plan,
+                    turn_id=turn_id,
+                )
+                continue
 
             # ── Chat intent: Gemini responded conversationally, no computation needed ──
             try:

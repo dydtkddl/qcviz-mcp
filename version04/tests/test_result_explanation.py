@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from qcviz_mcp.web.result_explainer import build_result_explanation
+from qcviz_mcp.web.result_explainer import build_result_explanation, explain_comparison
 
 
 def test_build_result_explanation_for_orbital_preview():
@@ -46,3 +46,22 @@ def test_build_result_explanation_adds_caution_for_unconverged_result():
     )
     assert explanation["summary"]
     assert explanation["cautions"]
+
+
+def test_explain_comparison_includes_advisor_recommendation():
+    explanation = explain_comparison(
+        delta={
+            "molecule_a": "benzene",
+            "molecule_b": "toluene",
+            "energy_delta_ev": -0.05,
+            "energy_delta_kcal": -1.15,
+            "gap_delta_ev": 0.02,
+            "both_converged": True,
+        },
+        result_a={},
+        result_b={},
+        advisor_data={"summary": "Use def2-TZVP for a tighter comparison."},
+    )
+    assert explanation["summary"]
+    assert explanation["advisor_recommendation"] == "Use def2-TZVP for a tighter comparison."
+    assert any("advisor-recommended" in item for item in explanation["next_actions"])

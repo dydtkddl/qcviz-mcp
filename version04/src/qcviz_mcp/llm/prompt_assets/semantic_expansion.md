@@ -15,3 +15,11 @@ Produce a short list of paraphrase queries that may help semantic grounding, exp
 - Do not convert an explanation-only question into a computation request.
 - Do not revive the raw phrase as a fake molecule candidate.
 - Do not add generic fallback examples like water, benzene, or ethanol.
+
+## Modification Queries
+
+For modification intent queries (substituent swap, R-group change),
+do NOT expand into unrelated molecule names.
+Instead, the grounding_queries should reference the scaffold molecule
+from conversation context, e.g., "methylethylamine substituent
+variations".

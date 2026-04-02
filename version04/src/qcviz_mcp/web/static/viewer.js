@@ -859,12 +859,89 @@
     console.log("[viewer.js] ✔ init() complete");
   }
 
+  // ── Phase 3: Comparison Dual Viewer ─────────────────────────
+  function initComparisonViewers(containerIdA, containerIdB) {
+    var elA = document.getElementById(containerIdA);
+    var elB = document.getElementById(containerIdB);
+    if (!elA || !elB) {
+      console.warn("[viewer.js] [comparison] containers not found:", containerIdA, containerIdB);
+      return { viewerA: null, viewerB: null };
+    }
+    if (!g.$3Dmol) {
+      console.warn("[viewer.js] [comparison] $3Dmol not available");
+      return { viewerA: null, viewerB: null };
+    }
+    var viewerA = g.$3Dmol.createViewer(elA, { backgroundColor: "white" });
+    var viewerB = g.$3Dmol.createViewer(elB, { backgroundColor: "white" });
+    return { viewerA: viewerA, viewerB: viewerB };
+  }
+
+  function renderComparisonMolecules(viewerA, viewerB, resultA, resultB) {
+    if (!viewerA || !viewerB) return;
+
+    function loadResult(targetViewer, result) {
+      targetViewer.removeAllModels();
+      if (!result) return;
+      var xyz =
+        result.xyz ||
+        result.xyz_block ||
+        (result.visualization && (result.visualization.xyz || result.visualization.xyz_block)) ||
+        "";
+      if (xyz) {
+        targetViewer.addModel(xyz, "xyz");
+      } else if (result.atoms && Array.isArray(result.atoms)) {
+        var lines = [String(result.atoms.length), ""];
+        for (var i = 0; i < result.atoms.length; i++) {
+          var atom = result.atoms[i] || {};
+          lines.push(
+            safeStr(atom.symbol || atom.element || "X", "X") +
+            "  " + Number(atom.x || 0) +
+            " " + Number(atom.y || 0) +
+            " " + Number(atom.z || 0)
+          );
+        }
+        targetViewer.addModel(lines.join("\n"), "xyz");
+      }
+      targetViewer.setStyle({}, { stick: {}, sphere: { scale: 0.3 } });
+      targetViewer.zoomTo();
+      targetViewer.render();
+    }
+
+    loadResult(viewerA, resultA);
+    loadResult(viewerB, resultB);
+  }
+
+  function syncViewerRotation(viewerA, viewerB) {
+    if (!viewerA || !viewerB) return;
+    var syncing = false;
+    var syncFromA = function () {
+      if (syncing) return;
+      syncing = true;
+      try {
+        var view = viewerA.getView();
+        viewerB.setView(view);
+      } catch (e) {
+        // noop
+      }
+      syncing = false;
+    };
+    if (typeof viewerA.setViewChangeCallback === "function") {
+      viewerA.setViewChangeCallback(syncFromA);
+    }
+  }
+
   // ─── 공개 API ──────────────────────────────────────
   App.viewer = {
     update: updateViewer,
     isReady: function () { return viewerReady; },
     getViewer: function () { return viewer; },
+    initComparisonViewers: initComparisonViewers,
+    renderComparisonMolecules: renderComparisonMolecules,
+    syncViewerRotation: syncViewerRotation,
   };
+  g.initComparisonViewers = initComparisonViewers;
+  g.renderComparisonMolecules = renderComparisonMolecules;
+  g.syncViewerRotation = syncViewerRotation;
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

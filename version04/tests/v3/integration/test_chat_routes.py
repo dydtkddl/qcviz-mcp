@@ -75,17 +75,21 @@ try:
     from httpx_ws import aconnect_ws
     from httpx_ws.transport import ASGIWebSocketTransport
     HAS_HTTPX_WS = True
-except ImportError:
+    HTTPX_WS_IMPORT_ERROR = None
+except ImportError as exc:
     HAS_HTTPX_WS = False
+    HTTPX_WS_IMPORT_ERROR = exc
+    aconnect_ws = None  # type: ignore[assignment]
+    ASGIWebSocketTransport = None  # type: ignore[assignment]
 
 
-@pytest.mark.skipif(not HAS_HTTPX_WS, reason="httpx-ws not installed")
 class TestWebSocketChat:
     """WebSocket /ws/chat"""
 
     @pytest.mark.asyncio
     async def test_websocket_connect(self, app):
         """WebSocket 연결 → ready 메시지."""
+        assert HAS_HTTPX_WS, f"httpx-ws import failed: {HTTPX_WS_IMPORT_ERROR}"
         transport = ASGIWebSocketTransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
             async with aconnect_ws("/ws/chat", client) as ws:
@@ -95,6 +99,7 @@ class TestWebSocketChat:
     @pytest.mark.asyncio
     async def test_websocket_ping(self, app):
         """WebSocket ping → ack 응답."""
+        assert HAS_HTTPX_WS, f"httpx-ws import failed: {HTTPX_WS_IMPORT_ERROR}"
         transport = ASGIWebSocketTransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
             async with aconnect_ws("/ws/chat", client) as ws:

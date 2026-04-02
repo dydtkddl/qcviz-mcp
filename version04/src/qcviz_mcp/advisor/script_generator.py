@@ -11,7 +11,6 @@ Version: 1.1.0
 import logging
 from datetime import datetime
 
-from qcviz_mcp.advisor.methods_drafter import CalculationRecord
 
 __all__ = ["ReproducibilityScriptGenerator"]
 

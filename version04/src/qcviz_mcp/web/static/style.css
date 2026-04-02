@@ -2382,3 +2382,195 @@ html:not([data-theme]) .icon-moon {
     font-size: 0.7rem;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Phase 3: Comparison & Delta View
+   ═══════════════════════════════════════════════════════════ */
+
+#comparison-container {
+  display: none;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  background: var(--surface-color, #fafafa);
+}
+
+.comparison-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.comparison-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.comparison-method {
+  font-size: 0.85rem;
+  color: var(--text-muted, #888);
+  font-family: monospace;
+}
+
+.comparison-close {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  cursor: pointer;
+  color: var(--text-muted, #888);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.comparison-close:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* ── Dual Viewer Grid ──────────────────────────────────── */
+.comparison-viewers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.comparison-viewer-wrap {
+  position: relative;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.comparison-viewer-label {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.comparison-viewer {
+  width: 100%;
+  height: 300px;
+  min-height: 250px;
+}
+
+/* ── Comparison Table ──────────────────────────────────── */
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.comparison-table th,
+.comparison-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: center;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.comparison-table th {
+  background: var(--surface-alt, #f0f0f0);
+  font-weight: 600;
+}
+
+.comparison-table th:first-child,
+.comparison-table td:first-child {
+  text-align: left;
+}
+
+.delta-positive {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.delta-negative {
+  color: #27ae60;
+  font-weight: 600;
+}
+
+.comparison-warning {
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+/* ── Explanation Card ──────────────────────────────────── */
+.comparison-explanation-card {
+  padding: 0.75rem 1rem;
+  background: var(--surface-color, #f8f9fa);
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #e0e0e0);
+}
+
+.explanation-summary {
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.explanation-findings,
+.explanation-interpretation ul,
+.explanation-cautions ul {
+  margin: 0.25rem 0 0.5rem 1.2rem;
+  padding: 0;
+}
+
+.explanation-interpretation,
+.explanation-cautions {
+  font-size: 0.88rem;
+  margin-bottom: 0.5rem;
+}
+
+/* ── Loading ───────────────────────────────────────────── */
+#comparison-loader {
+  display: none;
+}
+
+.comparison-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  color: var(--text-muted, #888);
+}
+
+.comparison-loading .spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #ddd;
+  border-top-color: var(--primary, #3498db);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Responsive ────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .comparison-viewers {
+    grid-template-columns: 1fr;
+  }
+
+  .comparison-viewer {
+    height: 220px;
+  }
+
+  .comparison-table {
+    font-size: 0.82rem;
+  }
+
+  .comparison-table th,
+  .comparison-table td {
+    padding: 0.35rem 0.5rem;
+  }
+}

@@ -57,7 +57,6 @@ def _parse_mol_block(sdf_text: str) -> List[Tuple[str, float, float, float]]:
 
     counts_parts = lines[counts_idx].split()
     n_atoms = int(counts_parts[0])
-    # n_bonds = int(counts_parts[1])  # not needed for XYZ
 
     if n_atoms <= 0:
         raise ValueError(

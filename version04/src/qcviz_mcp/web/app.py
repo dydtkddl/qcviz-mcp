@@ -11,7 +11,6 @@ from fastapi import APIRouter, Body, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 from qcviz_mcp.web.routes.chat import router as chat_router
 from qcviz_mcp.web.routes import chat as chat_route
@@ -351,7 +350,11 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def index(request: Request):
         if templates is not None and (TEMPLATES_DIR / "index.html").exists():
-            return templates.TemplateResponse("index.html", {"request": request, "root_path": request.scope.get("root_path", "")})
+            return templates.TemplateResponse(
+                request,
+                "index.html",
+                {"request": request, "root_path": request.scope.get("root_path", "")},
+            )
         elif (TEMPLATES_DIR / "index.html").exists():
             from fastapi.responses import FileResponse
             return FileResponse(str(TEMPLATES_DIR / "index.html"))

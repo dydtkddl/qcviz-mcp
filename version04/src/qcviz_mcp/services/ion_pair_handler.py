@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .molchat_client import MolChatClient
 from .pubchem_client import PubChemClient
-from .sdf_converter import merge_sdfs, sdf_to_xyz
+from .sdf_converter import merge_sdfs
 
 if TYPE_CHECKING:
     from .structure_resolver import StructureResolver

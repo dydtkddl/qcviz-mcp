@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Optional
 
+from qcviz_mcp.observability import metrics
 from qcviz_mcp.llm.lane_lock import LaneLock
 from qcviz_mcp.llm.routing_config import GROUNDING_AUTO_ACCEPT_THRESHOLD
 from qcviz_mcp.llm.schemas import (
@@ -21,6 +22,7 @@ SEMANTIC_OUTCOME_GROUNDING_CLARIFICATION = "grounding_clarification"
 SEMANTIC_OUTCOME_CUSTOM_ONLY_CLARIFICATION = "custom_only_clarification"
 SEMANTIC_OUTCOME_COMPUTE_READY = "compute_ready"
 SEMANTIC_OUTCOME_CHAT_ONLY = "chat_only"
+SEMANTIC_OUTCOME_MODIFICATION_CANDIDATES_READY = "modification_candidates_ready"
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,27 @@ def grounding_merge(
         return GroundingOutcome(
             semantic_outcome=SEMANTIC_OUTCOME_GROUNDING_CLARIFICATION,
             candidates=candidates,
+        )
+
+    if lane == "modification_exploration":
+        if synthetic is not None:
+            metrics.increment("modification_candidates_generated")
+            return GroundingOutcome(
+                semantic_outcome=SEMANTIC_OUTCOME_MODIFICATION_CANDIDATES_READY,
+                resolved_structure=synthetic,
+                candidates=candidates or [synthetic],
+            )
+        if primary is not None:
+            metrics.increment("modification_candidates_generated")
+            return GroundingOutcome(
+                semantic_outcome=SEMANTIC_OUTCOME_MODIFICATION_CANDIDATES_READY,
+                resolved_structure=primary,
+                candidates=candidates,
+            )
+        metrics.increment("modification_candidates_empty")
+        return GroundingOutcome(
+            semantic_outcome=SEMANTIC_OUTCOME_CUSTOM_ONLY_CLARIFICATION,
+            clarification_message="Base molecule is required before exploring modifications.",
         )
 
     if lane == "grounding_required":

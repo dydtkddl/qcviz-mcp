@@ -14,7 +14,17 @@ import json
 import logging
 from typing import Optional
 
-from qcviz_mcp.mcp_server import mcp
+try:
+    from qcviz_mcp.mcp_server import mcp
+except Exception:
+    class _NoopMCP:
+        def tool(self, *args, **kwargs):
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+    mcp = _NoopMCP()
 from qcviz_mcp.advisor import (
     PresetRecommender,
     MethodsSectionDrafter,

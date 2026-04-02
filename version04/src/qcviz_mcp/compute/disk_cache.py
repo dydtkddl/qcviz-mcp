@@ -24,7 +24,6 @@ def save_to_disk(key: str, mf_obj, energy: float):
         chkfile_path = CACHE_DIR / f"{key}.chk"
 
         from pyscf import lib
-        import h5py
         with lib.H5FileWrap(str(chkfile_path), 'w') as fh5:
             fh5['scf/e_tot'] = energy
             if hasattr(mf_obj, 'mo_energy'): fh5['scf/mo_energy'] = mf_obj.mo_energy

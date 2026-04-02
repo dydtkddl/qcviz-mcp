@@ -22,3 +22,10 @@ Combine planner output and grounded candidate metadata into one semantic outcome
 - Do not key on specific molecule names.
 - Do not whitelist benchmark cases.
 - Do not allow compute submit before structure lock.
+
+## Follow-up Context Rule
+
+If the input is identified as an implicit follow-up (modification,
+comparison, or structure reference), do NOT attempt to ground a new
+molecule. Instead, set decision="direct_answer" and let the downstream
+handler use the active_molecule from conversation state.

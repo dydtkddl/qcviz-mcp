@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 import threading
@@ -17,6 +18,20 @@ _BOOTSTRAP_STATUS: Dict[str, Any] = {
     "loader": None,
     "keys_loaded": 0,
     "error": None,
+}
+logger = logging.getLogger(__name__)
+
+# ── Phase 4: Feature flag registry ───────────────────────────
+_FEATURE_FLAGS: Dict[str, tuple[str, str]] = {
+    "QCVIZ_CONTEXT_TRACKING_ENABLED": (
+        "false", "Phase 1 conversation context tracking",
+    ),
+    "QCVIZ_MODIFICATION_LANE_ENABLED": (
+        "false", "Phase 2 modification exploration lane",
+    ),
+    "QCVIZ_COMPARISON_ENABLED": (
+        "false", "Phase 3 comparison & delta view",
+    ),
 }
 
 
@@ -66,6 +81,25 @@ def _load_with_manual_parser(path: Path, *, override: bool) -> int:
     return loaded
 
 
+def _log_feature_flags() -> Dict[str, bool]:
+    """Check and log the status of all Phase 1~3 feature flags."""
+    flags: Dict[str, bool] = {}
+    for key, (default, desc) in _FEATURE_FLAGS.items():
+        raw = os.environ.get(key, default).strip().lower()
+        enabled = raw in ("1", "true", "yes", "on")
+        flags[key] = enabled
+        logger.info(
+            "Feature flag %s (%s): %s",
+            key, desc, "ENABLED" if enabled else "disabled",
+        )
+    return flags
+
+
+def get_feature_flags() -> Dict[str, bool]:
+    """Return current feature flag states for external modules."""
+    return _log_feature_flags()
+
+
 def bootstrap_runtime_env(
     *,
     dotenv_path: Optional[os.PathLike[str] | str] = None,
@@ -107,6 +141,8 @@ def bootstrap_runtime_env(
     except Exception as exc:
         status["error"] = f"{type(exc).__name__}: {exc}"
 
+    status["feature_flags"] = _log_feature_flags()
+
     with _BOOTSTRAP_LOCK:
         _BOOTSTRAP_STATUS.update(status)
         return bool(_BOOTSTRAP_STATUS.get("loaded"))
@@ -129,5 +165,6 @@ def _reset_env_bootstrap_state_for_tests() -> None:
                 "loader": None,
                 "keys_loaded": 0,
                 "error": None,
+                "feature_flags": {},
             }
         )

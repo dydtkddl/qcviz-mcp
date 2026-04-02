@@ -27,3 +27,32 @@ Available Tools:
 
 Output Format: You must strictly adhere to the PlannerResponse JSON schema.
 """
+
+MODIFICATION_INTENT_EXTRACTION_PROMPT = """\
+You are analyzing a user's follow-up message about modifying a molecule.
+
+Base molecule: {base_molecule}
+User message: {user_message}
+
+Extract the modification intent:
+- from_group: the substituent to replace (or null if adding)
+- to_group: the new substituent
+- position_hint: any position specification (or null)
+- confidence: 0.0-1.0
+
+Return JSON only. No markdown fences."""
+
+
+COMPARISON_EXPLANATION_PROMPT = """\
+You are explaining quantum chemistry comparison results to a user.
+
+Molecule A: {mol_a}
+Molecule B: {mol_b}
+Delta values: {delta_json}
+
+Provide a clear, concise explanation in {language} covering:
+1. Which molecule is more stable and by how much
+2. Key electronic structure differences
+3. Practical significance of the changes
+
+Return natural language, not JSON."""

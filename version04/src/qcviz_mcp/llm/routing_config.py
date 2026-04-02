@@ -28,6 +28,45 @@ def _env_float_any(
     return value
 
 
+def _env_int_any(
+    names: Iterable[str],
+    default: int,
+    *,
+    min_value: int = 1,
+    max_value: int = 100,
+) -> int:
+    value = default
+    for name in names:
+        raw = os.getenv(name)
+        if raw in (None, ""):
+            continue
+        try:
+            value = int(raw)
+            break
+        except Exception:
+            continue
+    if value < min_value:
+        return min_value
+    if value > max_value:
+        return max_value
+    return value
+
+
 PLAN_CONFIDENCE_THRESHOLD = _env_float_any(["QCVIZ_CONFIDENCE_THRESHOLD"], 0.75)
-GROUNDING_AUTO_ACCEPT_THRESHOLD = _env_float_any(["QCVIZ_GROUNDING_AUTO_ACCEPT_THRESHOLD"], 0.85)
-TYPO_AUTO_PROMOTE_THRESHOLD = _env_float_any(["QCVIZ_TYPO_AUTO_PROMOTE_THRESHOLD"], 0.85)
+GROUNDING_AUTO_ACCEPT_THRESHOLD = _env_float_any(
+    ["QCVIZ_GROUNDING_AUTO_ACCEPT_THRESHOLD"],
+    0.85,
+)
+TYPO_AUTO_PROMOTE_THRESHOLD = _env_float_any(
+    ["QCVIZ_TYPO_AUTO_PROMOTE_THRESHOLD"],
+    0.85,
+)
+
+MODIFICATION_CONFIDENCE_THRESHOLD = _env_float_any(
+    ["QCVIZ_MODIFICATION_CONFIDENCE_THRESHOLD"],
+    0.60,
+)
+MODIFICATION_MAX_CANDIDATES = _env_int_any(
+    ["QCVIZ_MODIFICATION_MAX_CANDIDATES"],
+    5,
+)

@@ -40,6 +40,9 @@ class LaneLock:
     def allows_grounding(self) -> bool:
         return self._lane in {"grounding_required", "compute_ready"}
 
+    def allows_modification(self) -> bool:
+        return self._lane == "modification_exploration"
+
     def snapshot(self) -> dict:
         return {
             "lane": self._lane,

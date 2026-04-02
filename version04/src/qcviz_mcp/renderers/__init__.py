@@ -1,4 +1,8 @@
-"""Rendering utilities — Phase η: 자동 선택 로직."""
+"""Rendering utilities and renderer auto-detection."""
+
+from __future__ import annotations
+
+from typing import Any, Callable
 
 
 def get_best_renderer() -> str:
@@ -17,15 +21,31 @@ def get_best_renderer() -> str:
     return "html_only"
 
 
+def _pyvista_unavailable() -> bool:
+    return False
+
+
+HAS_PYVISTA = False
+pyvista_available: Callable[[], bool] = _pyvista_unavailable
+render_from_cube_string: Any = None
+render_orbital_png: Any = None
+
 try:
-    from qcviz_mcp.renderers.pyvista_renderer import (  # noqa: F401
-        is_available as pyvista_available,
-    )
     from qcviz_mcp.renderers.pyvista_renderer import (
+        is_available as pyvista_available,
         render_from_cube_string,
         render_orbital_png,
     )
 
     HAS_PYVISTA = pyvista_available()
 except ImportError:
-    HAS_PYVISTA = False
+    pass
+
+
+__all__ = [
+    "HAS_PYVISTA",
+    "get_best_renderer",
+    "pyvista_available",
+    "render_from_cube_string",
+    "render_orbital_png",
+]

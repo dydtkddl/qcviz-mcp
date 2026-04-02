@@ -10,7 +10,6 @@ Version: 1.1.0
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 from qcviz_mcp.advisor.reference_data import (
     load_nist_bonds,

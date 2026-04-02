@@ -12,7 +12,6 @@ Based on:
 Version: 1.1.0
 """
 
-import re
 import logging
 from dataclasses import dataclass, field
 from typing import Optional

@@ -8,6 +8,26 @@ from qcviz_mcp.env_bootstrap import bootstrap_runtime_env
 
 bootstrap_runtime_env()
 
+# ── Phase 4: Phase 2~3 configuration constants ───────────────
+# These provide a single source of truth. routing_config.py
+# should import from here instead of duplicating.
+
+# Phase 2: Modification
+MODIFICATION_CONFIDENCE_THRESHOLD: float = float(
+    os.environ.get("QCVIZ_MODIFICATION_CONFIDENCE_THRESHOLD", "0.60")
+)
+MODIFICATION_MAX_CANDIDATES: int = int(
+    os.environ.get("QCVIZ_MODIFICATION_MAX_CANDIDATES", "5")
+)
+
+# Phase 3: Comparison
+COMPARISON_MAX_CONCURRENT: int = int(
+    os.environ.get("QCVIZ_COMPARISON_MAX_CONCURRENT", "3")
+)
+COMPARISON_TIMEOUT_SEC: float = float(
+    os.environ.get("QCVIZ_COMPARISON_TIMEOUT_SEC", "300.0")
+)
+
 
 @dataclass(frozen=True)
 class ServerConfig:
@@ -47,6 +67,7 @@ class ServerConfig:
 
     scf_cache_max_size: int = 256
     ion_offset_angstrom: float = 5.0
+    context_tracking_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -62,6 +83,7 @@ class ServerConfig:
             "pubchem_timeout": "PUBCHEM_TIMEOUT",
             "scf_cache_max_size": "SCF_CACHE_MAX_SIZE",
             "ion_offset_angstrom": "ION_OFFSET_ANGSTROM",
+            "context_tracking_enabled": "QCVIZ_CONTEXT_TRACKING_ENABLED",
         }
 
         for field_name, field_def in cls.__dataclass_fields__.items():

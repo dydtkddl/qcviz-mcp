@@ -15,26 +15,26 @@ from pydantic import BaseModel, ValidationError
 from qcviz_mcp.env_bootstrap import bootstrap_runtime_env, get_env_bootstrap_status
 from qcviz_mcp.llm.grounding_merge import (
     GroundingConfig,
-    SEMANTIC_OUTCOME_CHAT_ONLY,
-    SEMANTIC_OUTCOME_COMPUTE_READY,
-    SEMANTIC_OUTCOME_CUSTOM_ONLY_CLARIFICATION,
-    SEMANTIC_OUTCOME_GROUNDED_DIRECT_ANSWER,
-    SEMANTIC_OUTCOME_GROUNDING_CLARIFICATION,
-    SEMANTIC_OUTCOME_SINGLE_CANDIDATE_CONFIRM,
     grounding_merge,
 )
 from qcviz_mcp.llm.lane_lock import LaneLock
-from qcviz_mcp.llm.normalizer import analyze_follow_up_request, normalize_user_text
+from qcviz_mcp.llm.normalizer import (
+    analyze_follow_up_request,
+    detect_implicit_follow_up,
+    parse_modification_intent,
+    normalize_user_text,
+)
 from qcviz_mcp.llm.schemas import (
     ActionPlan,
     GroundingOutcome,
-    IngressResult,
+    ModificationIntent,
     IngressRewriteResult,
     PlanResult,
     PlanResponse,
     WorkflowStep,
 )
 from qcviz_mcp.llm.trace import PipelineTrace, emit_pipeline_trace
+from qcviz_mcp.web.conversation_state import get_active_molecule
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,92 @@ def _token_survives(text: str, token: str) -> bool:
         return True
     haystack = _normalized_token(text)
     return needle in haystack
+
+
+def _load_context_active_molecule(context: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    session_id = _coerce_text((context or {}).get("session_id"))
+    if not session_id or not _env_flag("QCVIZ_CONTEXT_TRACKING_ENABLED", False):
+        return None
+    try:
+        molecule = get_active_molecule(session_id)
+    except Exception:
+        logger.debug("Failed to load active molecule for session=%s", session_id, exc_info=True)
+        return None
+    if not isinstance(molecule, Mapping):
+        return None
+    canonical_name = _coerce_text(molecule.get("canonical_name"))
+    if not canonical_name:
+        return None
+    return dict(molecule)
+
+
+def _build_conversation_context_payload(rewrite: IngressRewriteResult) -> Dict[str, Any]:
+    active_name = _coerce_text(getattr(rewrite, "context_molecule_name", None))
+    active_smiles = _coerce_text(getattr(rewrite, "context_molecule_smiles", None))
+    active_molecule = None
+    if active_name:
+        active_molecule = {
+            "name": active_name,
+            "smiles": active_smiles,
+        }
+    return {
+        "active_molecule": active_molecule,
+        "is_follow_up": bool(getattr(rewrite, "is_follow_up", False)),
+        "follow_up_type": _coerce_text(getattr(rewrite, "follow_up_type", None)) or None,
+    }
+
+
+def _apply_trace_context(trace: PipelineTrace, source: Any) -> None:
+    if isinstance(source, Mapping):
+        getter = source.get
+    else:
+        getter = lambda key, default=None: getattr(source, key, default)
+
+    context_name = _coerce_text(getter("context_molecule_name"))
+    if context_name:
+        trace.context_molecule_name = context_name
+
+    context_smiles = _coerce_text(getter("context_molecule_smiles"))
+    if context_smiles:
+        trace.context_molecule_smiles = context_smiles
+
+    implicit_follow_up = _coerce_text(
+        getter("implicit_follow_up_type") or getter("follow_up_type")
+    )
+    if implicit_follow_up:
+        trace.implicit_follow_up_type = implicit_follow_up
+
+    follow_up_value = getter("follow_up_detected")
+    if follow_up_value is None:
+        follow_up_value = getter("is_follow_up")
+    if follow_up_value is not None:
+        if isinstance(follow_up_value, bool):
+            trace.follow_up_detected = follow_up_value
+        else:
+            trace.follow_up_detected = str(follow_up_value).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            }
+
+
+def _inject_rewrite_context(plan_dict: Dict[str, Any], rewrite: IngressRewriteResult) -> Dict[str, Any]:
+    out = dict(plan_dict)
+    context_name = _coerce_text(getattr(rewrite, "context_molecule_name", None))
+    if context_name and not _coerce_text(out.get("context_molecule_name")):
+        out["context_molecule_name"] = context_name
+
+    context_smiles = _coerce_text(getattr(rewrite, "context_molecule_smiles", None))
+    if context_smiles and not _coerce_text(out.get("context_molecule_smiles")):
+        out["context_molecule_smiles"] = context_smiles
+
+    implicit_follow_up = _coerce_text(getattr(rewrite, "follow_up_type", None))
+    if implicit_follow_up and not _coerce_text(out.get("implicit_follow_up_type")):
+        out["implicit_follow_up_type"] = implicit_follow_up
+
+    return out
 
 
 def build_grounding_outcome(
@@ -550,9 +636,11 @@ class QCVizPromptPipeline:
     ) -> None:
         bootstrap_runtime_env()
         self.provider = _coerce_text(provider or os.getenv("QCVIZ_LLM_PROVIDER", "auto")).lower() or "auto"
-        self.openai_api_key = _coerce_text(openai_api_key or os.getenv("OPENAI_API_KEY"))
+        openai_key = os.getenv("OPENAI_API_KEY") if openai_api_key is None else openai_api_key
+        self.openai_api_key = _coerce_text(openai_key)
         self.openai_model = _coerce_text(openai_model or os.getenv("QCVIZ_OPENAI_MODEL", "gpt-4.1-mini")) or "gpt-4.1-mini"
-        self.gemini_api_key = _coerce_text(gemini_api_key or os.getenv("GEMINI_API_KEY"))
+        gemini_key = os.getenv("GEMINI_API_KEY") if gemini_api_key is None else gemini_api_key
+        self.gemini_api_key = _coerce_text(gemini_key)
         self.gemini_model = _coerce_text(gemini_model or os.getenv("QCVIZ_GEMINI_MODEL", "gemini-2.5-flash")) or "gemini-2.5-flash"
         self.enabled = enabled if enabled is not None else _env_flag_any(
             ["QCVIZ_PIPELINE_ENABLED", "QCVIZ_ENABLE_LLM_PIPELINE"],
@@ -670,6 +758,7 @@ class QCVizPromptPipeline:
                 reason="empty_message",
                 repair_count=0,
             )
+            _apply_trace_context(trace, result)
             trace.stage_outputs["fallback"] = result
             trace.fallback_stage = "stage0"
             trace.fallback_reason = "empty_message"
@@ -687,6 +776,7 @@ class QCVizPromptPipeline:
                 reason="pipeline_disabled",
                 repair_count=0,
             )
+            _apply_trace_context(trace, result)
             trace.stage_outputs["fallback"] = result
             trace.fallback_stage = "disabled"
             trace.fallback_reason = "pipeline_disabled"
@@ -704,6 +794,7 @@ class QCVizPromptPipeline:
                 reason="pipeline_force_heuristic",
                 repair_count=0,
             )
+            _apply_trace_context(trace, result)
             trace.stage_outputs["fallback"] = result
             trace.fallback_stage = "forced"
             trace.fallback_reason = "pipeline_force_heuristic"
@@ -722,6 +813,7 @@ class QCVizPromptPipeline:
                 reason=reason,
                 repair_count=0,
             )
+            _apply_trace_context(trace, result)
             trace.stage_outputs["fallback"] = result
             trace.fallback_stage = "provider"
             trace.fallback_reason = reason
@@ -734,6 +826,7 @@ class QCVizPromptPipeline:
         try:
             stage_started = time.perf_counter()
             rewrite = self._run_ingress_rewrite(raw_text, normalized_hint, context)
+            _apply_trace_context(trace, rewrite)
             trace.stage_latencies_ms["stage1_ingress"] = round((time.perf_counter() - stage_started) * 1000.0, 3)
             trace.stage_outputs["stage1_ingress"] = rewrite.model_dump(exclude_none=True)
             if self.stage1_enabled and rewrite.rewrite_confidence < 0.5:
@@ -790,6 +883,7 @@ class QCVizPromptPipeline:
                 reason=exc.reason,
                 repair_count=repair_count,
             )
+            _apply_trace_context(trace, result)
             trace.stage_outputs["fallback"] = result
             trace.fallback_stage = exc.stage
             trace.fallback_reason = exc.reason
@@ -1046,6 +1140,39 @@ class QCVizPromptPipeline:
             llm_rewrite_used=False,
             unknown_tokens=list(normalized_hint.get("unknown_acronyms") or []),
         )
+        active_mol = _load_context_active_molecule(context)
+        if active_mol:
+            has_explicit_name = bool(
+                _coerce_text(normalized_hint.get("maybe_structure_hint"))
+                or list(normalized_hint.get("canonical_candidates") or [])
+            )
+            implicit_result = detect_implicit_follow_up(
+                raw_text,
+                has_active_molecule=True,
+                has_explicit_molecule_name=has_explicit_name,
+            )
+            if implicit_result.get("is_implicit_follow_up"):
+                fallback.is_follow_up = True
+                fallback.follow_up_type = (
+                    _coerce_text(implicit_result.get("follow_up_type")) or fallback.follow_up_type
+                )
+                fallback.context_molecule_name = _coerce_text(active_mol.get("canonical_name")) or None
+                fallback.context_molecule_smiles = _coerce_text(active_mol.get("smiles")) or None
+                logger.info(
+                    "Implicit follow-up detected: type=%s context_mol=%s",
+                    fallback.follow_up_type,
+                    fallback.context_molecule_name,
+                )
+        parsed_mod_intent = parse_modification_intent(raw_text)
+        if parsed_mod_intent:
+            if isinstance(context, dict):
+                context["_modification_intent"] = parsed_mod_intent
+            logger.debug(
+                "Parsed modification intent from ingress rewrite: %s -> %s (conf=%.2f)",
+                parsed_mod_intent.get("from_group"),
+                parsed_mod_intent.get("to_group"),
+                parsed_mod_intent.get("confidence", 0.0),
+            )
         if not self.stage1_enabled or not self._should_use_stage1_rewrite(raw_text, normalized_hint):
             return fallback
 
@@ -1067,6 +1194,8 @@ class QCVizPromptPipeline:
         result.llm_rewrite_used = True
         result.is_follow_up = fallback.is_follow_up if not result.is_follow_up else result.is_follow_up
         result.follow_up_type = result.follow_up_type or fallback.follow_up_type
+        result.context_molecule_name = result.context_molecule_name or fallback.context_molecule_name
+        result.context_molecule_smiles = result.context_molecule_smiles or fallback.context_molecule_smiles
         if not result.preserved_tokens:
             result.preserved_tokens = list(fallback.preserved_tokens)
         if not result.unknown_tokens:
@@ -1077,6 +1206,35 @@ class QCVizPromptPipeline:
         if len(result.cleaned_text) < max(4, len(raw_text) // 4):
             raise PipelineStageError("stage1", "rewrite_drift_too_aggressive")
         return result
+
+    def _apply_modification_routing(self, plan_dict: Dict[str, Any], context: Mapping[str, Any]) -> None:
+        if not _env_flag("QCVIZ_MODIFICATION_LANE_ENABLED", False):
+            return
+        if not isinstance(context, Mapping):
+            return
+
+        raw_intent = context.get("_modification_intent")
+        if not raw_intent or not isinstance(raw_intent, Mapping):
+            return
+        try:
+            from qcviz_mcp.llm.routing_config import MODIFICATION_CONFIDENCE_THRESHOLD
+
+            intent = ModificationIntent.model_validate(dict(raw_intent))
+            if intent.confidence < MODIFICATION_CONFIDENCE_THRESHOLD:
+                return
+
+            plan_dict["lane"] = "modification_exploration"
+            plan_dict["planner_lane"] = "modification_exploration"
+            plan_dict["query_kind"] = "modification_exploration"
+            plan_dict["modification_intent"] = intent.model_dump(exclude_none=True)
+            logger.info(
+                "Routed to modification_exploration lane: %s -> %s (conf=%.2f)",
+                intent.from_group,
+                intent.to_group,
+                intent.confidence,
+            )
+        except Exception as exc:
+            logger.warning("Modification lane routing was skipped: %s", exc)
 
     def _run_action_planner(
         self,
@@ -1089,19 +1247,22 @@ class QCVizPromptPipeline:
         if not self.stage2_enabled:
             raise PipelineStageError("stage2", "router_planner_disabled")
 
+        conversation_context = _build_conversation_context_payload(rewrite)
         if llm_planner is not None and getattr(self, "_legacy_planner_passthrough", False):
             plan_obj = llm_planner(
                 rewrite.cleaned_text or raw_text,
                 {
                     "rewrite": rewrite.model_dump(),
                     "normalized_hint": normalized_hint,
+                    "conversation_context": conversation_context,
                 },
                 context,
             )
             plan_dict = _coerce_plan_dict(plan_obj)
             if not plan_dict:
                 raise PipelineStageError("stage2", "legacy_llm_planner_returned_empty_plan")
-            return plan_dict
+            self._apply_modification_routing(plan_dict, context)
+            return _inject_rewrite_context(plan_dict, rewrite)
 
         result = self._invoke_structured_stage(
             stage_name="stage2",
@@ -1112,6 +1273,7 @@ class QCVizPromptPipeline:
                 "original_text": raw_text,
                 "cleaned_text": rewrite.cleaned_text or raw_text,
                 "ingress": rewrite.model_dump(exclude_none=True),
+                "conversation_context": conversation_context,
                 "annotations": {
                     "question_like": bool(normalized_hint.get("question_like")),
                     "explicit_compute_action": bool(normalized_hint.get("explicit_compute_action")),
@@ -1136,6 +1298,7 @@ class QCVizPromptPipeline:
                     "chat_only",
                     "grounding_required",
                     "compute_ready",
+                    "modification_exploration",
                     "homo",
                     "lumo",
                     "esp",
@@ -1146,7 +1309,8 @@ class QCVizPromptPipeline:
                 ],
             },
         )
-        return result.model_dump(exclude_none=True)
+        self._apply_modification_routing(result.model_dump(exclude_none=True), context)
+        return _inject_rewrite_context(result.model_dump(exclude_none=True), rewrite)
 
     def _should_use_stage1_rewrite(self, raw_text: str, normalized_hint: Mapping[str, Any]) -> bool:
         text = _coerce_text(raw_text)
@@ -1181,6 +1345,7 @@ class QCVizPromptPipeline:
             "is_follow_up": plan_dict.get("is_follow_up") or bool(normalized_hint.get("follow_up_mode")),
             "unknown_acronyms": plan_dict.get("unknown_acronyms") or normalized_hint.get("unknown_acronyms") or [],
             "molecule_from_context": plan_dict.get("molecule_from_context") or normalized_hint.get("maybe_structure_hint"),
+            "modification_intent": plan_dict.get("modification_intent"),
         }
         try:
             parsed = PlanResult.model_validate(legacy_payload)
@@ -1401,8 +1566,32 @@ class QCVizPromptPipeline:
         reason: str,
         repair_count: int,
     ) -> Dict[str, Any]:
-        fallback_obj = heuristic_planner(raw_text, context, normalized_hint)
+        fallback_context = dict(context or {})
+        active_molecule = _load_context_active_molecule(fallback_context)
+        if active_molecule:
+            fallback_context["active_molecule"] = active_molecule
+        fallback_obj = heuristic_planner(raw_text, fallback_context, normalized_hint)
         fallback = _coerce_plan_dict(fallback_obj)
+        if active_molecule:
+            if not _coerce_text(fallback.get("context_molecule_name")):
+                fallback["context_molecule_name"] = _coerce_text(active_molecule.get("canonical_name")) or None
+            if not _coerce_text(fallback.get("context_molecule_smiles")):
+                fallback["context_molecule_smiles"] = _coerce_text(active_molecule.get("smiles")) or None
+            has_explicit_name = bool(
+                _coerce_text(normalized_hint.get("maybe_structure_hint"))
+                or list(normalized_hint.get("canonical_candidates") or [])
+            )
+            implicit_result = detect_implicit_follow_up(
+                raw_text,
+                has_active_molecule=True,
+                has_explicit_molecule_name=has_explicit_name,
+            )
+            if implicit_result.get("is_implicit_follow_up") and not _coerce_text(
+                fallback.get("implicit_follow_up_type")
+            ):
+                fallback["implicit_follow_up_type"] = (
+                    _coerce_text(implicit_result.get("follow_up_type")) or None
+                )
         query_kind = _coerce_text(fallback.get("query_kind")) or _coerce_text(normalized_hint.get("query_kind")) or "compute_ready"
         question_like = bool(fallback.get("question_like") or normalized_hint.get("question_like"))
         explicit_compute_action = bool(

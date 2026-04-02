@@ -20,7 +20,7 @@ from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
@@ -57,14 +57,17 @@ from qcviz_mcp.web.runtime_info import runtime_debug_info
 # FIX(M2): 새 서비스 모듈 import
 try:
     from qcviz_mcp.services.structure_resolver import StructureResolver, StructureResult
-    from qcviz_mcp.services.ion_pair_handler import is_ion_pair, resolve_ion_pair, IonPairResult, expand_alias
-    from qcviz_mcp.services.molchat_client import MolChatClient
-    from qcviz_mcp.services.pubchem_client import PubChemClient
-    from qcviz_mcp.services.ko_aliases import translate as ko_translate
+    from qcviz_mcp.services.ion_pair_handler import is_ion_pair, resolve_ion_pair
 except ImportError as _imp_err:
     logging.getLogger(__name__).warning("services import failed: %s", _imp_err)
     StructureResolver = None  # type: ignore
     StructureResult = None  # type: ignore
+
+    def is_ion_pair(_structures):  # type: ignore
+        return False
+
+    async def resolve_ion_pair(*_args, **_kwargs):  # type: ignore
+        raise RuntimeError("Ion pair handler unavailable")
 
 try:
     from qcviz_mcp.llm.agent import QCVizAgent
@@ -277,6 +280,17 @@ def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
         return v
     except Exception:
         return default
+
+
+def _comparison_enabled() -> bool:
+    """Check if the comparison feature is enabled."""
+    return os.getenv("QCVIZ_COMPARISON_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
 
 
 def _job_session_id(payload: Optional[Mapping[str, Any]]) -> str:
@@ -600,6 +614,78 @@ def _advisor_intent_name(payload: Mapping[str, Any]) -> str:
     return mapping.get(job_type, "single_point")
 
 
+def _extract_advisor_contexts(
+    payload: Mapping[str, Any],
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    payload_dict = dict(payload or {})
+    modification_context = payload_dict.get("modification_context")
+    if not isinstance(modification_context, Mapping):
+        modification_context = None
+    else:
+        modification_context = dict(modification_context)
+
+    comparison_context = payload_dict.get("comparison_context")
+    if not isinstance(comparison_context, Mapping):
+        comparison_context = None
+    else:
+        comparison_context = dict(comparison_context)
+
+    action_plan = payload_dict.get("action_plan")
+    if isinstance(action_plan, Mapping) and comparison_context is None:
+        comparison_plan = action_plan.get("comparison")
+        if isinstance(comparison_plan, Mapping):
+            targets = [
+                _safe_str(item)
+                for item in list(comparison_plan.get("targets") or [])
+                if _safe_str(item)
+            ]
+            if len(targets) >= 2:
+                comparison_context = {
+                    "mol_a": targets[0],
+                    "mol_b": targets[1],
+                }
+
+    return modification_context, comparison_context
+
+
+def _build_comparison_advisor_data(
+    result_a: Mapping[str, Any],
+    result_b: Mapping[str, Any],
+) -> Optional[Dict[str, Any]]:
+    summaries = []
+    for candidate in (
+        result_b.get("advisor_summary"),
+        result_a.get("advisor_summary"),
+    ):
+        if isinstance(candidate, Mapping):
+            summaries.append(dict(candidate))
+    if not summaries:
+        return None
+
+    best = summaries[0]
+    recommendation = ""
+    recommendations = best.get("recommendations") or []
+    if isinstance(recommendations, list):
+        recommendation = _safe_str(next((item for item in recommendations if _safe_str(item)), ""))
+    if not recommendation:
+        recommendation = _safe_str(best.get("preset_rationale"))
+    if not recommendation:
+        recommendation = _safe_str(best.get("literature_summary"))
+
+    functional = _safe_str(best.get("recommended_functional"))
+    basis = _safe_str(best.get("recommended_basis"))
+    summary = recommendation
+    if not summary and (functional or basis):
+        summary = f"Advisor suggests {functional or 'default functional'} / {basis or 'default basis'} for follow-up."
+
+    if not summary:
+        return None
+    return {
+        "summary": summary,
+        "recommendation": recommendation or summary,
+    }
+
+
 def _apply_advisor_enrichment(
     result: Mapping[str, Any],
     prepared: Mapping[str, Any],
@@ -616,6 +702,10 @@ def _apply_advisor_enrichment(
     )
     intent_name = _advisor_intent_name(prepared)
     advisor_enabled = bool(prepared.get("advisor", True))
+    prepared_modification_context, prepared_comparison_context = _extract_advisor_contexts(prepared)
+    result_modification_context, result_comparison_context = _extract_advisor_contexts(out)
+    modification_context = result_modification_context or prepared_modification_context
+    comparison_context = result_comparison_context or prepared_comparison_context
 
     with track_operation("web.advisor_enrichment", parameters={"intent_name": intent_name, "advisor_enabled": advisor_enabled}) as obs:
         if advisor_enabled and callable(enrich_result_with_advisor):
@@ -625,6 +715,8 @@ def _apply_advisor_enrichment(
                     intent_name=intent_name,
                     result=out,
                     preset_bundle=dict(advisor_plan or {}) if advisor_plan else None,
+                    modification_context=modification_context,
+                    comparison_context=comparison_context,
                 )
                 out["advisor"] = _json_safe(advisor_payload)
                 if callable(summarize_advisor_payload):
@@ -1288,7 +1380,6 @@ def _safe_plan_message(message: str, payload: Optional[Mapping[str, Any]] = None
 
         normalization_query_kind = _safe_str(message_normalization.get("query_kind"))
         normalization_follow_up = _safe_str(message_normalization.get("follow_up_mode"))
-        normalization_follow_up_requires_context = bool(message_normalization.get("follow_up_requires_context"))
         normalization_force_grounding = bool(message_normalization.get("semantic_grounding_needed"))
         normalization_force_compute = bool(
             normalization_follow_up
@@ -1802,7 +1893,6 @@ def _apply_session_continuation(out: Dict[str, Any], *, source_text: str = "") -
 
 
 def _preserve_structure_decomposition(out: Dict[str, Any], *, source_text: str = "") -> Dict[str, Any]:
-    action_plan = dict(out.get("action_plan") or {})
     authoritative_action_plan = _action_plan_can_skip_raw_reparse(out)
     query = _safe_str(out.get("structure_query"))
     if not query and authoritative_action_plan:
@@ -2616,12 +2706,15 @@ async def _run_direct_compute_async(
 
         if bool(prepared.get("advisor", True)) and callable(prepare_advisor_plan_from_geometry):
             try:
+                prepared_modification_context, prepared_comparison_context = _extract_advisor_contexts(prepared)
                 advisor_plan = prepare_advisor_plan_from_geometry(
                     intent_name=_advisor_intent_name(prepared),
                     xyz_text=prepared.get("xyz"),
                     atom_spec=prepared.get("atom_spec"),
                     charge=_safe_int(prepared.get("charge"), 0) or 0,
                     spin=_multiplicity_to_spin(prepared.get("multiplicity")),
+                    modification_context=prepared_modification_context,
+                    comparison_context=prepared_comparison_context,
                 )
                 if callable(apply_preset_to_runner_kwargs):
                     prepared = apply_preset_to_runner_kwargs(prepared, advisor_plan)
@@ -2671,7 +2764,6 @@ def _run_direct_compute(
 
         if loop and loop.is_running():
             # We're inside a running loop — schedule on it from this thread
-            import concurrent.futures
             future = asyncio.run_coroutine_threadsafe(
                 _run_direct_compute_async(payload, progress_callback),
                 loop,
@@ -2691,6 +2783,136 @@ def _run_direct_compute(
             status_code=500,
             detail=f"계산 실행 중 오류: {e} / Computation error: {e}",
         )
+
+
+def _run_comparison_compute(
+    payload_a: Dict[str, Any],
+    payload_b: Dict[str, Any],
+    *,
+    job_type: str = "analyze",
+    progress_callback: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    """Run two calculations and build delta/explanation for comparison."""
+    from qcviz_mcp.compute.pyscf_runner import compute_delta
+    from qcviz_mcp.web.result_explainer import explain_comparison
+
+    payload_a = dict(payload_a or {})
+    payload_b = dict(payload_b or {})
+
+    method = _safe_str(
+        payload_a.get("method")
+        or payload_b.get("method")
+        or getattr(pyscf_runner, "DEFAULT_METHOD", "B3LYP"),
+        getattr(pyscf_runner, "DEFAULT_METHOD", "B3LYP"),
+    )
+    basis = _safe_str(
+        payload_a.get("basis")
+        or payload_b.get("basis")
+        or getattr(pyscf_runner, "DEFAULT_BASIS", "def2-SVP"),
+        getattr(pyscf_runner, "DEFAULT_BASIS", "def2-SVP"),
+    )
+    payload_a["method"] = method
+    payload_a["basis"] = basis
+    payload_b["method"] = method
+    payload_b["basis"] = basis
+    payload_a.setdefault("job_type", job_type)
+    payload_b.setdefault("job_type", job_type)
+    comparison_context = {
+        "mol_a": _safe_str(payload_a.get("structure_query")),
+        "mol_b": _safe_str(payload_b.get("structure_query")),
+    }
+    payload_a.setdefault("comparison_context", comparison_context)
+    payload_b.setdefault("comparison_context", comparison_context)
+
+    result_a: Optional[Dict[str, Any]] = None
+    result_b: Optional[Dict[str, Any]] = None
+    error_a: Optional[str] = None
+    error_b: Optional[str] = None
+
+    if progress_callback:
+        try:
+            progress_callback(
+                progress=0.05,
+                step="comparison_a",
+                message=(
+                    f"분자 A 계산 시작: "
+                    f"{_safe_str(payload_a.get('structure_query'), '?')}"
+                ),
+            )
+        except Exception:
+            pass
+    try:
+        result_a = _run_direct_compute(payload_a, progress_callback=progress_callback)
+    except Exception as exc:
+        error_a = str(exc)
+        logger.warning("Comparison molecule A failed: %s", exc)
+
+    if progress_callback:
+        try:
+            progress_callback(
+                progress=0.50,
+                step="comparison_b",
+                message=(
+                    f"분자 B 계산 시작: "
+                    f"{_safe_str(payload_b.get('structure_query'), '?')}"
+                ),
+            )
+        except Exception:
+            pass
+    try:
+        result_b = _run_direct_compute(payload_b, progress_callback=progress_callback)
+    except Exception as exc:
+        error_b = str(exc)
+        logger.warning("Comparison molecule B failed: %s", exc)
+
+    delta: Dict[str, Any] = {}
+    explanation: Dict[str, Any] = {}
+    if result_a and result_b:
+        if progress_callback:
+            try:
+                progress_callback(
+                    progress=0.90,
+                    step="comparison_delta",
+                    message="비교 delta 계산 중...",
+                )
+            except Exception:
+                pass
+        try:
+            delta = compute_delta(result_a, result_b)
+            if isinstance(delta, Mapping):
+                comparison_context["delta"] = dict(delta)
+            advisor_data = _build_comparison_advisor_data(result_a, result_b)
+            explanation = explain_comparison(
+                delta=delta,
+                result_a=result_a,
+                result_b=result_b,
+                job_type=job_type,
+                advisor_data=advisor_data,
+            )
+        except Exception as exc:
+            logger.warning("Delta/explanation failed: %s", exc)
+
+    if progress_callback:
+        try:
+            progress_callback(
+                progress=1.00,
+                step="comparison_done",
+                message="비교 분석 완료",
+            )
+        except Exception:
+            pass
+
+    return {
+        "comparison": True,
+        "result_a": result_a,
+        "result_b": result_b,
+        "error_a": error_a,
+        "error_b": error_b,
+        "delta": delta,
+        "explanation": explanation,
+        "method": method,
+        "basis": basis,
+    }
 
 
 # ── Job Record & Manager ─────────────────────────────────────
@@ -3376,6 +3598,68 @@ def submit_job(
     return {**snapshot, "session_token": session_meta["session_token"]}
 
 
+@router.post("/api/comparison")
+async def submit_comparison_job(
+    payload: Optional[Dict[str, Any]] = Body(default=None),
+) -> Dict[str, Any]:
+    """Submit a comparison calculation for two molecules."""
+    if not _comparison_enabled():
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "비교 기능이 비활성화되어 있습니다. "
+                "QCVIZ_COMPARISON_ENABLED=true로 설정하세요."
+            ),
+        )
+
+    body = dict(payload or {})
+    structure_a = _safe_str(body.get("structure_a") or body.get("molecule_a"))
+    structure_b = _safe_str(body.get("structure_b") or body.get("molecule_b"))
+    if not structure_a or not structure_b:
+        raise HTTPException(
+            status_code=400,
+            detail="structure_a와 structure_b 모두 필요합니다.",
+        )
+
+    method = _safe_str(
+        body.get("method") or getattr(pyscf_runner, "DEFAULT_METHOD", "B3LYP"),
+        getattr(pyscf_runner, "DEFAULT_METHOD", "B3LYP"),
+    )
+    basis = _safe_str(
+        body.get("basis") or getattr(pyscf_runner, "DEFAULT_BASIS", "def2-SVP"),
+        getattr(pyscf_runner, "DEFAULT_BASIS", "def2-SVP"),
+    )
+    job_type = _safe_str(body.get("job_type"), "analyze") or "analyze"
+
+    payload_a = {
+        "structure_query": structure_a,
+        "method": method,
+        "basis": basis,
+        "job_type": job_type,
+    }
+    payload_b = {
+        "structure_query": structure_b,
+        "method": method,
+        "basis": basis,
+        "job_type": job_type,
+    }
+
+    try:
+        result = await asyncio.to_thread(
+            _run_comparison_compute,
+            payload_a,
+            payload_b,
+            job_type=job_type,
+        )
+        return {"ok": True, "result": result}
+    except Exception as exc:
+        logger.exception("Comparison job failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"비교 계산 실패: {exc}",
+        )
+
+
 @router.get("/jobs")
 def list_jobs(
     include_payload: bool = Query(default=False),
@@ -3584,6 +3868,7 @@ __all__ = [
     "router",
     "JOB_MANAGER",
     "get_job_manager",
+    "_comparison_enabled",
     "_extract_message",
     "_extract_session_id",
     "_extract_session_token",
@@ -3592,6 +3877,7 @@ __all__ = [
     "_normalize_result_contract",
     "_prepare_payload",
     "_public_plan_dict",
+    "_run_comparison_compute",
     "_safe_plan_message",
     "_submit_or_reuse_job",
     "TERMINAL_STATES",

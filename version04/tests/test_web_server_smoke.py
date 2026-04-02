@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import socket
 import threading
 import time
@@ -19,10 +20,14 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _ws_backend() -> str:
+    return "wsproto" if importlib.util.find_spec("wsproto") is not None else "websockets"
+
+
 @pytest.fixture()
 def live_server_url(app, patch_fake_runners):
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", ws="wsproto")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", ws=_ws_backend())
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None
     thread = threading.Thread(target=server.run, daemon=True)

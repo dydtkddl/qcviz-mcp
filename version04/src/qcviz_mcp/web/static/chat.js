@@ -74,6 +74,12 @@
     return String(str);
   }
 
+  function escapeHtml(str) {
+    var div = document.createElement("div");
+    div.textContent = str == null ? "" : String(str);
+    return div.innerHTML;
+  }
+
   function safeStr(v, fb) {
     return v == null ? fb || "" : String(v).trim();
   }
@@ -399,6 +405,156 @@
       parts.push("E=" + Number(result.total_energy_hartree).toFixed(8) + " Ha");
     }
     return parts.join(" | ");
+  }
+
+  // ── Phase 3: Comparison UI helpers ──────────────────────────
+  function _ensureComparisonLoaderElement() {
+    var loader = document.getElementById("comparison-loader");
+    if (loader) return loader;
+    loader = document.createElement("div");
+    loader.id = "comparison-loader";
+    loader.style.display = "none";
+    var host = document.getElementById("resultsContent") || (chatMessages && chatMessages.parentNode) || document.body;
+    host.appendChild(loader);
+    return loader;
+  }
+
+  function _ensureComparisonContainerElement() {
+    var container = document.getElementById("comparison-container");
+    if (container) return container;
+    container = document.createElement("div");
+    container.id = "comparison-container";
+    container.style.display = "none";
+    var host = document.getElementById("resultsContent") || (chatMessages && chatMessages.parentNode) || document.body;
+    host.appendChild(container);
+    return container;
+  }
+
+  function showComparisonLoader(targets) {
+    var loader = _ensureComparisonLoaderElement();
+    if (!loader) return;
+    var names = targets && targets.length >= 2 ? (targets[0] + " vs " + targets[1]) : "비교 계산";
+    loader.innerHTML = '<div class="comparison-loading">' +
+      '<div class="spinner"></div>' +
+      "<span>" + escapeHtml(names) + " 계산 중...</span>" +
+      "</div>";
+    loader.style.display = "block";
+  }
+
+  function hideComparisonLoader() {
+    var loader = document.getElementById("comparison-loader");
+    if (!loader) return;
+    loader.style.display = "none";
+    loader.innerHTML = "";
+  }
+
+  function renderComparisonView(result) {
+    if (!result) return;
+    var container = _ensureComparisonContainerElement();
+    if (!container) {
+      console.warn("[chat.js] [comparison] container unavailable");
+      return;
+    }
+
+    var delta = result.delta || {};
+    var molA = safeStr(delta.molecule_a, "분자 A");
+    var molB = safeStr(delta.molecule_b, "분자 B");
+
+    if (!result.result_a && !result.result_b) {
+      container.style.display = "none";
+      container.innerHTML = "";
+      appendMessage("system", "두 분자 모두 계산에 실패했습니다.");
+      return;
+    }
+    if (!result.result_a || result.error_a) {
+      appendMessage(
+        "system",
+        molA + " 계산이 실패했습니다. " + molB + " 결과만 표시합니다.",
+      );
+    }
+    if (!result.result_b || result.error_b) {
+      appendMessage(
+        "system",
+        molB + " 계산이 실패했습니다. " + molA + " 결과만 표시합니다.",
+      );
+    }
+    if (delta.molecule_a && delta.molecule_a === delta.molecule_b) {
+      appendMessage(
+        "system",
+        "동일 분자의 비교입니다. method/basis가 다른 경우 설정 차이를 확인하세요.",
+      );
+    }
+
+    container.style.display = "block";
+
+    var methodStr = safeStr(result.method) + (safeStr(result.basis) ? (" / " + safeStr(result.basis)) : "");
+    container.innerHTML = "" +
+      '<div class="comparison-header">' +
+      "<h3>비교 결과: " + escapeHtml(molA) + " vs " + escapeHtml(molB) + "</h3>" +
+      (methodStr ? ('<span class="comparison-method">' + escapeHtml(methodStr) + "</span>") : "") +
+      '<button class="comparison-close" type="button" title="닫기">&times;</button>' +
+      "</div>" +
+      '<div class="comparison-viewers">' +
+      '<div class="comparison-viewer-wrap">' +
+      '<div class="comparison-viewer-label">' + escapeHtml(molA) + "</div>" +
+      '<div id="comparison-viewer-a" class="comparison-viewer"></div>' +
+      "</div>" +
+      '<div class="comparison-viewer-wrap">' +
+      '<div class="comparison-viewer-label">' + escapeHtml(molB) + "</div>" +
+      '<div id="comparison-viewer-b" class="comparison-viewer"></div>' +
+      "</div>" +
+      "</div>" +
+      '<div id="comparison-table-container"></div>' +
+      '<div id="comparison-explanation"></div>';
+
+    var closeBtn = container.querySelector(".comparison-close");
+    if (closeBtn) closeBtn.addEventListener("click", closeComparisonView);
+
+    var viewerApi = App.viewer || {};
+    var initViewers = viewerApi.initComparisonViewers || g.initComparisonViewers;
+    var renderMolecules = viewerApi.renderComparisonMolecules || g.renderComparisonMolecules;
+    var syncRotation = viewerApi.syncViewerRotation || g.syncViewerRotation;
+    if (typeof initViewers === "function" && typeof renderMolecules === "function") {
+      var viewers = initViewers("comparison-viewer-a", "comparison-viewer-b");
+      renderMolecules(
+        viewers && viewers.viewerA,
+        viewers && viewers.viewerB,
+        result.result_a || {},
+        result.result_b || {}
+      );
+      if (typeof syncRotation === "function") {
+        syncRotation(viewers && viewers.viewerA, viewers && viewers.viewerB);
+      }
+    }
+
+    var resultsApi = App.results || {};
+    var renderTable = resultsApi.renderComparisonTable || g.renderComparisonTable;
+    var renderExplanation = resultsApi.renderExplanationCard || g.renderExplanationCard;
+    if (typeof renderTable === "function") {
+      renderTable(
+        "comparison-table-container",
+        result.delta || {},
+        result.result_a || {},
+        result.result_b || {}
+      );
+    }
+    if (typeof renderExplanation === "function" && result.explanation) {
+      renderExplanation("comparison-explanation", result.explanation);
+    }
+
+    if (result.error_a) {
+      appendMessage("system", "분자 A 계산 실패: " + safeStr(result.error_a));
+    }
+    if (result.error_b) {
+      appendMessage("system", "분자 B 계산 실패: " + safeStr(result.error_b));
+    }
+  }
+
+  function closeComparisonView() {
+    var container = document.getElementById("comparison-container");
+    if (!container) return;
+    container.style.display = "none";
+    container.innerHTML = "";
   }
 
   function _updateQueueMeta(container, queue, status) {
@@ -1084,6 +1240,35 @@
           });
           break;
 
+        case "comparison_started":
+          appendMessage("system", safeStr(msg.message, "비교 계산을 시작합니다..."), {
+            turnId: msg.turn_id,
+            jobId: msg.job_id,
+          });
+          showComparisonLoader(msg.targets || []);
+          break;
+
+        case "comparison_result":
+          hideComparisonLoader();
+          if (msg.result) {
+            renderComparisonView(msg.result);
+            if (msg.message) {
+              appendMessage("assistant", safeStr(msg.message), {
+                turnId: msg.turn_id,
+                jobId: msg.job_id,
+              });
+            }
+          }
+          break;
+
+        case "comparison_error":
+          hideComparisonLoader();
+          appendMessage("system", safeStr(msg.message, "비교 계산 중 오류가 발생했습니다."), {
+            turnId: msg.turn_id,
+            jobId: msg.job_id,
+          });
+          break;
+
         case "job_submitted":
           var job = msg.job || {};
           var submittedTurnId = safeStr(msg.turn_id || pendingTurnId || currentTurnId);
@@ -1636,8 +1821,14 @@
     connect: connect,
     sendMessage: sendMessage,
     appendMessage: appendMessage,
+    renderComparisonView: renderComparisonView,
+    closeComparisonView: closeComparisonView,
     getState: function () { return chatState; },
   };
+  g.showComparisonLoader = showComparisonLoader;
+  g.hideComparisonLoader = hideComparisonLoader;
+  g.renderComparisonView = renderComparisonView;
+  g.closeComparisonView = closeComparisonView;
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

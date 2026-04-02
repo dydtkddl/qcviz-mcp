@@ -7,7 +7,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 ConfidenceBand = Literal["low", "medium", "high"]
 ClarificationFieldType = Literal["text", "textarea", "radio", "select", "multiselect", "number", "checkbox"]
-PlannerLane = Literal["chat_only", "grounding_required", "compute_ready"]
+PlannerLane = Literal["chat_only", "grounding_required", "compute_ready", "modification_exploration"]
 ComputationType = Literal["homo", "lumo", "esp", "optimization", "energy", "frequency", "custom"]
 PresetType = Literal["acs", "rsc", "custom"]
 ActionPlanMode = Literal["question", "compute", "workflow", "clarify"]
@@ -38,8 +38,9 @@ GroundingSemanticOutcome = Literal[
     "custom_only_clarification",
     "compute_ready",
     "chat_only",
+    "modification_candidates_ready",
 ]
-ExecutionAction = Literal["compute", "chat_response", "chat_with_structure", "clarification"]
+ExecutionAction = Literal["compute", "chat_response", "chat_with_structure", "clarification", "modification_preview"]
 
 
 def confidence_to_band(confidence: float) -> ConfidenceBand:
@@ -174,6 +175,8 @@ class IngressResult(BaseModel):
     language_hint: Optional[str] = Field(default=None, validation_alias=AliasChoices("language_hint", "language"))
     llm_rewrite_used: bool = False
     unknown_tokens: List[str] = Field(default_factory=list)
+    context_molecule_name: Optional[str] = None
+    context_molecule_smiles: Optional[str] = None
     noise_flags: List[str] = Field(default_factory=list)
     suspected_typos: List[str] = Field(default_factory=list)
     rewrite_confidence: float = 0.0
@@ -540,6 +543,36 @@ class ActionPlan(BaseModel):
         return self
 
 
+class ModificationIntent(BaseModel):
+    from_group: Optional[str] = None
+    to_group: Optional[str] = None
+    from_group_ko: Optional[str] = None
+    to_group_ko: Optional[str] = None
+    position_hint: Optional[str] = None
+    base_molecule_name: Optional[str] = None
+    base_molecule_smiles: Optional[str] = None
+    confidence: float = 0.0
+
+    @field_validator(
+        "from_group",
+        "to_group",
+        "from_group_ko",
+        "to_group_ko",
+        "position_hint",
+        "base_molecule_name",
+        "base_molecule_smiles",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_modification_text(cls, value: Any) -> Optional[str]:
+        return _as_optional_text(value)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _normalize_modification_confidence(cls, value: Any) -> float:
+        return _clamp_confidence(value)
+
+
 class PlanResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -554,6 +587,7 @@ class PlanResult(BaseModel):
     is_follow_up: bool = False
     unknown_acronyms: List[str] = Field(default_factory=list)
     molecule_from_context: Optional[str] = None
+    modification_intent: Optional[ModificationIntent] = None
 
     @field_validator("confidence", mode="before")
     @classmethod
@@ -587,12 +621,25 @@ class PlanResult(BaseModel):
     def _normalize_unknown_acronyms(cls, value: Any) -> List[str]:
         return _as_string_list(value)
 
+    @field_validator("modification_intent", mode="before")
+    @classmethod
+    def _normalize_modification_intent(cls, value: Any) -> Optional[ModificationIntent]:
+        if value in (None, ""):
+            return None
+        if isinstance(value, ModificationIntent):
+            return value
+        if isinstance(value, dict):
+            return ModificationIntent.model_validate(value)
+        return None
+
     @model_validator(mode="after")
     def _check_plan_invariants(self) -> "PlanResult":
         if self.lane == "chat_only" and self.computation_type is not None:
             raise ValueError("chat_only lane cannot include computation_type")
         if self.lane == "compute_ready" and not (self.molecule_name or self.molecule_from_context):
             raise ValueError("compute_ready lane requires molecule_name or molecule_from_context")
+        if self.lane == "modification_exploration" and not self.modification_intent:
+            raise ValueError("modification_exploration lane requires modification_intent")
         return self
 
 
@@ -803,6 +850,9 @@ class PlanResponse(BaseModel):
     reasoning_notes: List[str] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
     chat_response: Optional[str] = None
+    context_molecule_name: Optional[str] = None
+    context_molecule_smiles: Optional[str] = None
+    implicit_follow_up_type: Optional[str] = None
     action_plan: Optional[ActionPlan] = None
 
     @field_validator("intent", "job_type", "focus_tab", "provider", "reasoning", mode="before")
@@ -830,6 +880,9 @@ class PlanResponse(BaseModel):
         "planner_lane",
         "locked_lane",
         "pipeline_fallback_stage",
+        "context_molecule_name",
+        "context_molecule_smiles",
+        "implicit_follow_up_type",
         mode="before",
     )
     @classmethod

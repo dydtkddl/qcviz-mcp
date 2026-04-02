@@ -1,10 +1,9 @@
 import logging
 import time
-import json
 import functools
 import math
 from contextlib import contextmanager
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, is_dataclass
 from typing import Any
 
 logger = logging.getLogger("qcviz_mcp")
@@ -106,6 +105,10 @@ class MetricsCollector:
             },
         }
 
+    def summary(self) -> dict[str, int]:
+        """Return a flat counter map for lightweight call sites."""
+        return dict(self._counters)
+
 # Singleton
 metrics = MetricsCollector()
 
@@ -175,3 +178,118 @@ def _safe_repr(v: Any, max_len: int = 200) -> str:
     """Truncate large values for logging."""
     s = repr(v)
     return s[:max_len] + "..." if len(s) > max_len else s
+
+
+def _as_trace_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if hasattr(value, "model_dump") and callable(value.model_dump):
+        try:
+            dumped = value.model_dump(exclude_none=False)
+            if isinstance(dumped, dict):
+                return dict(dumped)
+        except Exception:
+            pass
+    if is_dataclass(value):
+        try:
+            dumped = asdict(value)
+            if isinstance(dumped, dict):
+                return dict(dumped)
+        except Exception:
+            pass
+    if hasattr(value, "__dict__"):
+        try:
+            dumped = vars(value)
+            if isinstance(dumped, dict):
+                return dict(dumped)
+        except Exception:
+            pass
+    return {}
+
+
+def extract_context_tracking(trace_data: Any) -> dict[str, Any]:
+    payload = _as_trace_mapping(trace_data)
+    stage_outputs = payload.get("stage_outputs")
+    stage_outputs = stage_outputs if isinstance(stage_outputs, dict) else {}
+
+    sources = [
+        payload,
+        stage_outputs.get("stage1_ingress"),
+        stage_outputs.get("fallback"),
+        stage_outputs.get("stage2_router"),
+    ]
+
+    def _first_text(*keys: str) -> str | None:
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for key in keys:
+                value = source.get(key)
+                text = str(value).strip() if value is not None else ""
+                if text:
+                    return text
+        return None
+
+    def _first_bool(*keys: str) -> bool | None:
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for key in keys:
+                value = source.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, bool):
+                    return value
+                return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+        return None
+
+    active_molecule = _first_text("context_molecule_name")
+    implicit_follow_up = _first_text("implicit_follow_up_type", "follow_up_type")
+    follow_up_detected = _first_bool("follow_up_detected", "is_follow_up")
+    if follow_up_detected is None and implicit_follow_up is not None:
+        follow_up_detected = True
+
+    return {
+        "active_molecule": active_molecule,
+        "implicit_follow_up": implicit_follow_up,
+        "follow_up_detected": follow_up_detected,
+    }
+
+
+# ── Phase 4: Phase 2~3 observability ─────────────────────────
+
+_PHASE2_METRIC_KEYS = [
+    "modification_lane_entered",
+    "modification_candidates_generated",
+    "modification_candidates_empty",
+    "modification_rdkit_unavailable",
+    "modification_validation_failed",
+]
+
+_PHASE3_METRIC_KEYS = [
+    "comparison_submitted",
+    "comparison_completed",
+    "comparison_failed",
+    "comparison_timeout",
+    "comparison_single_side_failure",
+    "comparison_identical_molecules",
+]
+
+
+def register_phase2_3_metrics() -> None:
+    """Pre-register Phase 2~3 metric keys in the MetricsCollector."""
+    for key in _PHASE2_METRIC_KEYS + _PHASE3_METRIC_KEYS:
+        metrics.increment(key, 0)
+
+
+def get_phase_summary() -> dict[str, dict[str, int]]:
+    """Return a summary of Phase 2~3 metrics."""
+    summary = metrics.summary()
+    return {
+        "modification": {
+            k: int(summary.get(k, 0)) for k in _PHASE2_METRIC_KEYS
+        },
+        "comparison": {
+            k: int(summary.get(k, 0)) for k in _PHASE3_METRIC_KEYS
+        },
+    }

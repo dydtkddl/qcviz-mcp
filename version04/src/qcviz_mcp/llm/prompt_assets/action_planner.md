@@ -28,6 +28,27 @@ First decide whether the user is asking a chemistry question or asking QCViz to 
 - If the user says `그거`, `저거`, `다시`, `이번엔`, `그 분자` and the follow-up clearly depends on prior context, prefer `compute_ready` with `molecule_from_context`.
 - If follow-up context is still not sufficient to know the structure, choose `grounding_required`.
 
+## Conversation Context
+
+If `conversation_context.active_molecule` is present in the input payload,
+it means the user has been discussing this molecule in prior turns.
+
+When the user's query lacks an explicit molecule name but contains:
+- modification language (`swap`, `replace`, `change substituent`, `치환기 바꾸면`, etc.)
+- comparison language (`compare`, `vs`, `비교`, etc.)
+- implicit reference (`그럼`, `그러면`, `if we`, `what about`, etc.)
+
+Then you MUST:
+1. Set `is_follow_up: true`
+2. Set `molecule_from_context` to the active molecule name
+3. For modification queries, set `lane: "chat_only"` because downstream handling will decide the next step
+4. Do not generate random molecule candidates
+
+Example:
+- Active molecule: `methylethylamine`
+- User: `치환기를 하나만 바꾸면?`
+- Correct output: `lane="chat_only"`, `is_follow_up=true`, `molecule_from_context="methylethylamine"`
+
 # Critical Policy
 - Never classify a purely explanatory question as `compute_ready`.
 - Unknown acronym without explicit compute action must be `chat_only`.

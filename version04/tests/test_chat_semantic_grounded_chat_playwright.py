@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import socket
 import threading
 import time
@@ -36,6 +37,10 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _ws_backend() -> str:
+    return "wsproto" if importlib.util.find_spec("wsproto") is not None else "websockets"
+
+
 @pytest.fixture()
 def semantic_case(request):
     return request.param
@@ -50,7 +55,7 @@ def semantic_chat_stub(monkeypatch, semantic_case):
 @pytest.fixture()
 def live_semantic_chat_server(app, patch_fake_runners, semantic_chat_stub):
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", ws="wsproto")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", ws=_ws_backend())
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None
     thread = threading.Thread(target=server.run, daemon=True)
@@ -77,7 +82,8 @@ def live_semantic_chat_server(app, patch_fake_runners, semantic_chat_stub):
 
 @pytest.mark.parametrize(("semantic_case", "message"), _PLAYWRIGHT_PARAMS, indirect=("semantic_case",))
 def test_playwright_semantic_benchmark_behavior_contract(live_semantic_chat_server, semantic_case, message):
-    playwright = pytest.importorskip("playwright.sync_api")
+    from playwright import sync_api as playwright
+
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()

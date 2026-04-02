@@ -3,20 +3,17 @@
 from __future__ import annotations
 
 import os
-import re
-import sys
 import tempfile
 import logging
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any
 from collections import Counter
 
 import numpy as np
 
 try:
-    import pyscf
-    from pyscf import gto, lo, scf, lib
+    from pyscf import gto, lo, scf
     from pyscf.tools import cubegen
     _HAS_PYSCF = True
 except ImportError:
@@ -36,7 +33,7 @@ except ImportError:
 
 from qcviz_mcp.backends.base import IAOResult, IBOResult, OrbitalBackend, SCFResult
 from qcviz_mcp.backends.registry import registry
-from qcviz_mcp.analysis.sanitize import sanitize_xyz as _sanitize_xyz, extract_atom_list, atoms_to_xyz_string
+from qcviz_mcp.analysis.sanitize import sanitize_xyz as _sanitize_xyz
 
 logger = logging.getLogger(__name__)
 

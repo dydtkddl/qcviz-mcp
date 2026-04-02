@@ -24,6 +24,21 @@ def _payload_has_structure(payload: Mapping[str, Any]) -> bool:
     )
 
 
+def _comparison_requested(payload: Mapping[str, Any]) -> bool:
+    action_plan = payload.get("action_plan")
+    if not isinstance(action_plan, Mapping):
+        return False
+    comparison = action_plan.get("comparison")
+    if not isinstance(comparison, Mapping):
+        return False
+    enabled = comparison.get("enabled")
+    if isinstance(enabled, bool):
+        return enabled
+    if enabled is None:
+        return False
+    return str(enabled).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def execution_guard(outcome: GroundingOutcome, payload: Optional[Mapping[str, Any]] = None) -> ExecutionDecision:
     payload_dict = _coerce_payload(payload)
     semantic_outcome = outcome.semantic_outcome
@@ -40,6 +55,30 @@ def execution_guard(outcome: GroundingOutcome, payload: Optional[Mapping[str, An
         return ExecutionDecision(
             action="chat_with_structure",
             payload={"resolved_structure": outcome.resolved_structure.model_dump(exclude_none=True)},
+            candidates=outcome.candidates,
+        )
+
+    if semantic_outcome == "modification_candidates_ready":
+        if outcome.resolved_structure is None:
+            metrics.increment("pipeline.guard.action.clarification")
+            return ExecutionDecision(action="clarification", payload=None, candidates=outcome.candidates)
+        metrics.increment("pipeline.guard.action.modification_preview")
+        metrics.increment("modification_lane_entered")
+        return ExecutionDecision(
+            action="modification_preview",
+            payload={
+                "resolved_structure": (
+                    outcome.resolved_structure.model_dump(exclude_none=True)
+                    if hasattr(outcome.resolved_structure, "model_dump")
+                    else outcome.resolved_structure
+                ),
+                "modification_candidates": [
+                    candidate.model_dump(exclude_none=True)
+                    if hasattr(candidate, "model_dump")
+                    else candidate
+                    for candidate in (outcome.candidates or [])
+                ],
+            },
             candidates=outcome.candidates,
         )
 
@@ -62,6 +101,8 @@ def execution_guard(outcome: GroundingOutcome, payload: Optional[Mapping[str, An
     if outcome.resolved_structure is not None and not payload_dict.get("structure_query"):
         payload_dict["structure_query"] = outcome.resolved_structure.name
     metrics.increment("pipeline.guard.action.compute")
+    if _comparison_requested(payload_dict):
+        metrics.increment("comparison_submitted")
     return ExecutionDecision(action="compute", payload=payload_dict, candidates=outcome.candidates)
 
 
@@ -84,4 +125,6 @@ def execution_guard_from_payload(payload: Optional[Mapping[str, Any]]) -> Execut
         metrics.increment("pipeline.guard_rejection_rate")
         raise ExecutionGuardViolation("missing_structure_payload")
     metrics.increment("pipeline.guard.action.compute")
+    if _comparison_requested(payload_dict):
+        metrics.increment("comparison_submitted")
     return ExecutionDecision(action="compute", payload=payload_dict)

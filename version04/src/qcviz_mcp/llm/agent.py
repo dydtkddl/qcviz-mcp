@@ -904,13 +904,36 @@ class QCVizAgent:
         if follow_up.get("job_type") and not data.get("job_type") and not data.get("intent"):
             data["job_type"] = follow_up.get("job_type")
 
-        if str(data.get("query_kind") or "").strip() == "chat_only":
+        has_follow_up_signal = bool(
+            self._none_if_blank(data.get("follow_up_mode") or data.get("implicit_follow_up_type"))
+        ) or bool(data.get("is_follow_up"))
+        has_structure_signal = bool(self._none_if_blank(data.get("structure_query"))) or bool(
+            list(data.get("structure_query_candidates") or [])
+        ) or bool(list(data.get("canonical_candidates") or []))
+
+        if (
+            str(data.get("query_kind") or "").strip() == "chat_only"
+            and not has_follow_up_signal
+            and not has_structure_signal
+        ):
             data["intent"] = "chat"
             data["job_type"] = "chat"
             data["structure_query"] = None
             data["needs_clarification"] = False
             data["missing_slots"] = []
             data["clarification_kind"] = None
+        elif (
+            str(data.get("query_kind") or "").strip() == "chat_only"
+            and has_follow_up_signal
+            and not has_structure_signal
+            and not bool(data.get("needs_clarification"))
+        ):
+            data["needs_clarification"] = True
+            data["clarification_kind"] = data.get("clarification_kind") or "continuation_targeting"
+            missing_slots = [str(item).strip() for item in list(data.get("missing_slots") or []) if str(item).strip()]
+            if "structure_query" not in missing_slots:
+                missing_slots.append("structure_query")
+            data["missing_slots"] = missing_slots
 
         if not data.get("job_type"):
             data["job_type"] = intent or "analyze"

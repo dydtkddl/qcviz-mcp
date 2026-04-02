@@ -573,6 +573,128 @@
     return parts.join("");
   }
 
+  // ── Phase 3: Comparison Table ───────────────────────────────
+  function renderComparisonTable(containerId, delta, resultA, resultB) {
+    var container = document.getElementById(containerId);
+    if (!container || !delta) return;
+
+    var rows = [];
+    if (delta.energy_delta_ev != null) {
+      rows.push({
+        property: "총 에너지 (eV)",
+        valueA: delta.energy_a_ev != null ? Number(delta.energy_a_ev).toFixed(4) : "—",
+        valueB: delta.energy_b_ev != null ? Number(delta.energy_b_ev).toFixed(4) : "—",
+        delta: (Number(delta.energy_delta_ev) >= 0 ? "+" : "") + Number(delta.energy_delta_ev).toFixed(4),
+        extra: delta.energy_delta_kcal != null
+          ? ((Number(delta.energy_delta_kcal) >= 0 ? "+" : "") + Number(delta.energy_delta_kcal).toFixed(2) + " kcal/mol")
+          : "",
+      });
+    }
+    if (delta.gap_delta_ev != null) {
+      rows.push({
+        property: "HOMO-LUMO Gap (eV)",
+        valueA: delta.gap_a_ev != null ? Number(delta.gap_a_ev).toFixed(4) : "—",
+        valueB: delta.gap_b_ev != null ? Number(delta.gap_b_ev).toFixed(4) : "—",
+        delta: (Number(delta.gap_delta_ev) >= 0 ? "+" : "") + Number(delta.gap_delta_ev).toFixed(4),
+        extra: "",
+      });
+    }
+    if (delta.homo_energy_ev_delta != null) {
+      rows.push({
+        property: "HOMO 에너지 (eV)",
+        valueA: delta.homo_energy_ev_a != null ? Number(delta.homo_energy_ev_a).toFixed(4) : "—",
+        valueB: delta.homo_energy_ev_b != null ? Number(delta.homo_energy_ev_b).toFixed(4) : "—",
+        delta: (Number(delta.homo_energy_ev_delta) >= 0 ? "+" : "") + Number(delta.homo_energy_ev_delta).toFixed(4),
+        extra: "",
+      });
+    }
+    if (delta.lumo_energy_ev_delta != null) {
+      rows.push({
+        property: "LUMO 에너지 (eV)",
+        valueA: delta.lumo_energy_ev_a != null ? Number(delta.lumo_energy_ev_a).toFixed(4) : "—",
+        valueB: delta.lumo_energy_ev_b != null ? Number(delta.lumo_energy_ev_b).toFixed(4) : "—",
+        delta: (Number(delta.lumo_energy_ev_delta) >= 0 ? "+" : "") + Number(delta.lumo_energy_ev_delta).toFixed(4),
+        extra: "",
+      });
+    }
+    if (delta.max_charge_diff != null) {
+      rows.push({
+        property: "최대 전하 변화 (e)",
+        valueA: "—",
+        valueB: "—",
+        delta: Number(delta.max_charge_diff).toFixed(4),
+        extra: delta.mean_charge_diff != null ? ("평균: " + Number(delta.mean_charge_diff).toFixed(4)) : "",
+      });
+    }
+    if (delta.atom_count_a != null && delta.atom_count_b != null) {
+      rows.push({
+        property: "원자 수",
+        valueA: String(delta.atom_count_a),
+        valueB: String(delta.atom_count_b),
+        delta: String(Number(delta.atom_count_b) - Number(delta.atom_count_a)),
+        extra: "",
+      });
+    }
+
+    var molA = safeStr(delta.molecule_a, "분자 A");
+    var molB = safeStr(delta.molecule_b, "분자 B");
+    var html = '<table class="comparison-table"><thead><tr>' +
+      "<th>성질</th><th>" + escapeHtml(molA) + "</th><th>" + escapeHtml(molB) + "</th><th>Δ (차이)</th>" +
+      "</tr></thead><tbody>";
+
+    rows.forEach(function (row) {
+      var dVal = parseFloat(row.delta);
+      var cls = "";
+      if (!isNaN(dVal)) cls = dVal > 0 ? "delta-positive" : (dVal < 0 ? "delta-negative" : "");
+      html += "<tr>" +
+        "<td>" + escapeHtml(row.property) + "</td>" +
+        "<td>" + escapeHtml(row.valueA) + "</td>" +
+        "<td>" + escapeHtml(row.valueB) + "</td>" +
+        '<td class="' + cls + '">' + escapeHtml(row.delta) +
+        (row.extra ? ("<br><small>" + escapeHtml(row.extra) + "</small>") : "") +
+        "</td></tr>";
+    });
+    html += "</tbody></table>";
+
+    if (delta.both_converged === false) {
+      html += '<div class="comparison-warning">⚠️ 하나 이상의 계산이 완전히 수렴하지 않았을 수 있습니다.</div>';
+    }
+    container.innerHTML = html;
+  }
+
+  function renderExplanationCard(containerId, explanation) {
+    var el = document.getElementById(containerId);
+    if (!el || !explanation) return;
+
+    var html = '<div class="comparison-explanation-card">';
+    if (explanation.summary) {
+      html += '<p class="explanation-summary">' + escapeHtml(safeStr(explanation.summary)) + "</p>";
+    }
+    if (explanation.key_findings && explanation.key_findings.length) {
+      html += '<ul class="explanation-findings">';
+      explanation.key_findings.forEach(function (item) {
+        html += "<li>" + escapeHtml(safeStr(item)) + "</li>";
+      });
+      html += "</ul>";
+    }
+    if (explanation.interpretation && explanation.interpretation.length) {
+      html += '<div class="explanation-interpretation"><strong>해석:</strong><ul>';
+      explanation.interpretation.forEach(function (item) {
+        html += "<li>" + escapeHtml(safeStr(item)) + "</li>";
+      });
+      html += "</ul></div>";
+    }
+    if (explanation.cautions && explanation.cautions.length) {
+      html += '<div class="explanation-cautions"><strong>주의:</strong><ul>';
+      explanation.cautions.forEach(function (item) {
+        html += "<li>" + escapeHtml(safeStr(item)) + "</li>";
+      });
+      html += "</ul></div>";
+    }
+    html += "</div>";
+    el.innerHTML = html;
+  }
+
   // ─── 결과 표시 진입점 ──────────────────────────────
 
   function displayResult(result, opts) {
@@ -641,7 +763,11 @@
   App.results = {
     display: displayResult,
     getActiveTab: function () { return activeTab; },
+    renderComparisonTable: renderComparisonTable,
+    renderExplanationCard: renderExplanationCard,
   };
+  g.renderComparisonTable = renderComparisonTable;
+  g.renderExplanationCard = renderExplanationCard;
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

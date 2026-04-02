@@ -7,6 +7,7 @@ from qcviz_mcp.llm.grounding_merge import (
     SEMANTIC_OUTCOME_COMPUTE_READY,
     SEMANTIC_OUTCOME_CUSTOM_ONLY_CLARIFICATION,
     SEMANTIC_OUTCOME_GROUNDED_DIRECT_ANSWER,
+    SEMANTIC_OUTCOME_MODIFICATION_CANDIDATES_READY,
     SEMANTIC_OUTCOME_SINGLE_CANDIDATE_CONFIRM,
     grounding_merge,
 )
@@ -200,6 +201,28 @@ def test_grounding_merge_can_report_compute_ready_once_structure_is_locked():
     assert outcome.allow_compute_submit is True
 
 
+def test_grounding_merge_returns_modification_candidates_ready_when_base_structure_exists():
+    outcome = grounding_merge(
+        {"query_kind": "modification_exploration", "structure_query": "benzene"},
+        [],
+        lane_lock=LaneLock(),
+    )
+    assert outcome.semantic_outcome == SEMANTIC_OUTCOME_MODIFICATION_CANDIDATES_READY
+    assert outcome.resolved_structure is not None
+    assert outcome.resolved_structure.name == "benzene"
+    assert outcome.allow_compute_submit is False
+
+
+def test_grounding_merge_requests_clarification_when_modification_lane_has_no_base_structure():
+    outcome = grounding_merge(
+        {"query_kind": "modification_exploration"},
+        [],
+        lane_lock=LaneLock(),
+    )
+    assert outcome.semantic_outcome == SEMANTIC_OUTCOME_CUSTOM_ONLY_CLARIFICATION
+    assert "Base molecule" in (outcome.clarification_message or "")
+
+
 def test_grounding_outcome_wrapper_preserves_compatibility_shape():
     outcome = build_grounding_outcome(
         {"query_kind": "chat_only", "semantic_grounding_needed": True},
@@ -214,6 +237,18 @@ def test_execution_guard_returns_clarification_for_single_candidate_confirm():
     outcome = GroundingOutcome(semantic_outcome=SEMANTIC_OUTCOME_SINGLE_CANDIDATE_CONFIRM)
     decision = execution_guard(outcome, {"structure_query": None})
     assert decision.action == "clarification"
+
+
+def test_execution_guard_returns_modification_preview_payload():
+    outcome = GroundingOutcome(
+        semantic_outcome=SEMANTIC_OUTCOME_MODIFICATION_CANDIDATES_READY,
+        resolved_structure={"name": "benzene", "smiles": "c1ccccc1", "source": "plan"},
+        candidates=[{"name": "benzene", "smiles": "c1ccccc1", "source": "plan"}],
+    )
+    decision = execution_guard(outcome, {})
+    assert decision.action == "modification_preview"
+    assert decision.payload["resolved_structure"]["name"] == "benzene"
+    assert decision.payload["modification_candidates"][0]["smiles"] == "c1ccccc1"
 
 
 def test_execution_guard_raises_when_compute_ready_has_no_structure():

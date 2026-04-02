@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import socket
 import threading
 import time
@@ -18,6 +19,10 @@ def _free_port() -> int:
     with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def _ws_backend() -> str:
+    return "wsproto" if importlib.util.find_spec("wsproto") is not None else "websockets"
 
 
 @pytest.fixture()
@@ -65,7 +70,7 @@ def semantic_grounding_stub(monkeypatch):
 @pytest.fixture()
 def live_server_url(app, patch_fake_runners, semantic_grounding_stub):
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", ws="wsproto")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", ws=_ws_backend())
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None
     thread = threading.Thread(target=server.run, daemon=True)
@@ -91,7 +96,8 @@ def live_server_url(app, patch_fake_runners, semantic_grounding_stub):
 
 
 def test_playwright_semantic_dropdown_uses_grounded_candidate_not_water(live_server_url):
-    playwright = pytest.importorskip("playwright.sync_api")
+    from playwright import sync_api as playwright
+
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -114,7 +120,8 @@ def test_playwright_semantic_dropdown_uses_grounded_candidate_not_water(live_ser
 
 
 def test_playwright_semantic_selection_completes_without_second_composition_prompt(live_server_url):
-    playwright = pytest.importorskip("playwright.sync_api")
+    from playwright import sync_api as playwright
+
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -138,7 +145,8 @@ def test_playwright_semantic_selection_completes_without_second_composition_prom
 
 
 def test_playwright_question_like_acronym_routes_to_chat_without_clarify(live_server_url):
-    playwright = pytest.importorskip("playwright.sync_api")
+    from playwright import sync_api as playwright
+
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()

@@ -92,23 +92,17 @@ def _install_arq_stub() -> None:
     sys.modules["arq.connections"] = connections_module
 
 
-_install_pyscf_stub()
+if not _HAS_REAL_PYSCF:
+    _install_pyscf_stub()
 _install_arq_stub()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def pytest_collection_modifyitems(config, items):
-    if not _HAS_REAL_PYSCF:
-        skip_real_pyscf = pytest.mark.skip(reason="Real PySCF is not installed in this environment.")
-        for item in items:
-            if item.get_closest_marker("real_pyscf") or "tests/test_run_geometry_optimization.py" in item.nodeid:
-                item.add_marker(skip_real_pyscf)
-    if not _HAS_WSPROTO:
-        skip_wsproto = pytest.mark.skip(reason="wsproto is not installed in this environment.")
-        for item in items:
-            if "tests/test_web_server_smoke.py" in item.nodeid:
-                item.add_marker(skip_wsproto)
+    # Do not auto-skip test groups based on environment.
+    # If prerequisites are missing, tests should fail explicitly.
+    return None
 
 from qcviz_mcp.app import create_app
 from qcviz_mcp.compute import pyscf_runner

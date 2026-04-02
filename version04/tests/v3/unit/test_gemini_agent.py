@@ -48,8 +48,7 @@ class TestGeminiParse:
         agent = GeminiAgent(api_key="test-key", model="gemini-2.5-flash")
         # Mock the internal call
         parse_method = getattr(agent, "parse", None) or getattr(agent, "extract", None) or getattr(agent, "run", None)
-        if parse_method is None:
-            pytest.skip("No parse/extract/run method found")
+        assert parse_method is not None, "No parse/extract/run method found"
 
     def test_tool_schemas_present(self):
         """TOOL_SCHEMAS 또는 도구 정의가 존재."""

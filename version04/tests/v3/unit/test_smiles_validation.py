@@ -5,8 +5,6 @@ import pytest
 
 from qcviz_mcp.services.structure_resolver import _validate_llm_smiles
 
-pytest.importorskip("rdkit")
-
 
 class TestValidateLlmSmiles:
     def test_valid_ethanol(self):

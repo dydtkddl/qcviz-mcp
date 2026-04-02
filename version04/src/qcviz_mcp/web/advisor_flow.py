@@ -23,7 +23,7 @@ import json
 import logging
 import re
 from collections import Counter, defaultdict
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from qcviz_mcp import __version__ as QCVIZ_VERSION
 try:
@@ -652,6 +652,46 @@ def _build_record(
     }
 
 
+def _normalize_modification_context(
+    modification_context: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(modification_context, Mapping):
+        return None
+    normalized = {
+        "base_molecule": modification_context.get("base_molecule"),
+        "modified_molecule": modification_context.get("modified_molecule"),
+        "from_group": modification_context.get("from_group"),
+        "to_group": modification_context.get("to_group"),
+        "relationship": "substituent_swap",
+    }
+    if not any(
+        value not in (None, "", [])
+        for key, value in normalized.items()
+        if key != "relationship"
+    ):
+        return None
+    return normalized
+
+
+def _normalize_comparison_context(
+    comparison_context: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(comparison_context, Mapping):
+        return None
+    delta_payload = comparison_context.get("delta")
+    if not isinstance(delta_payload, Mapping):
+        delta_payload = {}
+    normalized = {
+        "mol_a": comparison_context.get("mol_a"),
+        "mol_b": comparison_context.get("mol_b"),
+        "delta_energy": delta_payload.get("energy") or delta_payload.get("energy_delta_ev"),
+        "delta_gap": delta_payload.get("homo_lumo_gap") or delta_payload.get("gap_delta_ev"),
+    }
+    if not any(value not in (None, "", []) for value in normalized.values()):
+        return None
+    return normalized
+
+
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
@@ -662,6 +702,9 @@ def prepare_advisor_plan(
     intent_name: str,
     charge: int = 0,
     spin: int = 0,
+    *,
+    modification_context: Optional[Mapping[str, Any]] = None,
+    comparison_context: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Resolve geometry and run exact-signature recommend_preset."""
     out: Dict[str, Any] = {
@@ -719,6 +762,16 @@ def prepare_advisor_plan(
     if not out["applied_basis"]:
         out["warnings"].append("advisor preset에서 basis를 추출하지 못했습니다.")
 
+    normalized_modification = _normalize_modification_context(modification_context)
+    if normalized_modification:
+        out["modification"] = normalized_modification
+        if out.get("system_type") in (None, "unknown", ""):
+            out["system_type"] = "organic_modified"
+
+    normalized_comparison = _normalize_comparison_context(comparison_context)
+    if normalized_comparison:
+        out["comparison"] = normalized_comparison
+
     return out
 
 
@@ -729,6 +782,8 @@ def prepare_advisor_plan_from_geometry(
     atom_spec: Optional[str] = None,
     charge: int = 0,
     spin: int = 0,
+    modification_context: Optional[Mapping[str, Any]] = None,
+    comparison_context: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run recommend_preset directly from already-resolved geometry.
 
@@ -788,6 +843,16 @@ def prepare_advisor_plan_from_geometry(
     if not out["applied_basis"]:
         out["warnings"].append("advisor preset에서 basis를 추출하지 못했습니다.")
 
+    normalized_modification = _normalize_modification_context(modification_context)
+    if normalized_modification:
+        out["modification"] = normalized_modification
+        if out.get("system_type") in (None, "unknown", ""):
+            out["system_type"] = "organic_modified"
+
+    normalized_comparison = _normalize_comparison_context(comparison_context)
+    if normalized_comparison:
+        out["comparison"] = normalized_comparison
+
     return out
 
 
@@ -820,6 +885,9 @@ def enrich_result_with_advisor(
     intent_name: str,
     result: Dict[str, Any],
     preset_bundle: Optional[Dict[str, Any]] = None,
+    *,
+    modification_context: Optional[Mapping[str, Any]] = None,
+    comparison_context: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run exact-signature postcompute advisor enrichment."""
     advisor: Dict[str, Any] = {
@@ -832,6 +900,20 @@ def enrich_result_with_advisor(
         "record": None,
     }
 
+    bundle_modification_context: Optional[Mapping[str, Any]] = None
+    bundle_comparison_context: Optional[Mapping[str, Any]] = None
+    if isinstance(preset_bundle, Mapping):
+        bundle_modification_context = (
+            preset_bundle.get("modification_context")
+            or preset_bundle.get("modification")
+        )
+        bundle_comparison_context = (
+            preset_bundle.get("comparison_context")
+            or preset_bundle.get("comparison")
+        )
+    effective_modification_context = modification_context or bundle_modification_context
+    effective_comparison_context = comparison_context or bundle_comparison_context
+
     if preset_bundle:
         advisor["preset"] = preset_bundle.get("preset")
     else:
@@ -840,6 +922,8 @@ def enrich_result_with_advisor(
             intent_name=intent_name,
             charge=_safe_int(result.get("charge"), 0),
             spin=_safe_int(result.get("spin"), 0),
+            modification_context=effective_modification_context,
+            comparison_context=effective_comparison_context,
         ).get("preset")
 
     record = _build_record(
@@ -971,6 +1055,12 @@ def enrich_result_with_advisor(
         "bond_angle_keys": sorted(list(bond_angles.keys())),
         "validation_status_normalized": validation_status,
     }
+    normalized_modification = _normalize_modification_context(effective_modification_context)
+    if normalized_modification:
+        advisor["meta"]["modification"] = normalized_modification
+    normalized_comparison = _normalize_comparison_context(effective_comparison_context)
+    if normalized_comparison:
+        advisor["meta"]["comparison"] = normalized_comparison
 
     return advisor
 

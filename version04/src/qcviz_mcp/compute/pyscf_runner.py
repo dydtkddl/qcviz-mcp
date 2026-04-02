@@ -902,11 +902,13 @@ def _extract_lowdin_charges(mol: gto.Mole, mf: Any) -> List[Dict[str, Any]]:
             dm = dm[0] + dm[1]
         s = getattr(mf, "get_ovlp", lambda: active_mol.intor_symmetric("int1e_ovlp"))()
         from pyscf.scf import hf as scf_hf
+        if not hasattr(scf_hf, "lowdin_pop"):
+            return []
         _, chg = scf_hf.lowdin_pop(active_mol, dm, s=s, verbose=0)
         safe_chg = [0.0 if (np.isnan(q) or np.isinf(q)) else float(q) for q in chg]
         return _normalize_partial_charges(mol, safe_chg)
     except Exception as e:
-        logger.warning("Löwdin population failed: %s", e)
+        logger.warning("Lowdin population failed: %s", e)
         return []
 
 
@@ -1734,11 +1736,71 @@ def run_analyze(structure_query: Optional[str] = None, xyz: Optional[str] = None
     return _finalize_result_contract(result)
 
 
+def compute_delta(
+    result_a: Mapping[str, Any],
+    result_b: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Compute property deltas between two completed calculation results."""
+    delta: Dict[str, Any] = {
+        "molecule_a": _safe_str(result_a.get("structure_name") or result_a.get("structure_query")),
+        "molecule_b": _safe_str(result_b.get("structure_name") or result_b.get("structure_query")),
+        "method_a": _safe_str(result_a.get("method")),
+        "method_b": _safe_str(result_b.get("method")),
+        "basis_a": _safe_str(result_a.get("basis")),
+        "basis_b": _safe_str(result_b.get("basis")),
+    }
+
+    energy_a = _safe_float(result_a.get("total_energy_ev"))
+    energy_b = _safe_float(result_b.get("total_energy_ev"))
+    if energy_a is not None and energy_b is not None:
+        delta["energy_a_ev"] = energy_a
+        delta["energy_b_ev"] = energy_b
+        delta["energy_delta_ev"] = round(energy_b - energy_a, 6)
+        delta["energy_delta_kcal"] = round((energy_b - energy_a) * EV_TO_KCAL, 4)
+
+    gap_a = _safe_float(result_a.get("orbital_gap_ev"))
+    gap_b = _safe_float(result_b.get("orbital_gap_ev"))
+    if gap_a is not None and gap_b is not None:
+        delta["gap_a_ev"] = gap_a
+        delta["gap_b_ev"] = gap_b
+        delta["gap_delta_ev"] = round(gap_b - gap_a, 6)
+
+    for key in ("homo_energy_ev", "lumo_energy_ev"):
+        val_a = _safe_float(result_a.get(key))
+        val_b = _safe_float(result_b.get(key))
+        if val_a is not None and val_b is not None:
+            delta[f"{key}_a"] = val_a
+            delta[f"{key}_b"] = val_b
+            delta[f"{key}_delta"] = round(val_b - val_a, 6)
+
+    charges_a = result_a.get("partial_charges") or result_a.get("mulliken_charges") or []
+    charges_b = result_b.get("partial_charges") or result_b.get("mulliken_charges") or []
+    if isinstance(charges_a, list) and isinstance(charges_b, list):
+        vals_a = [float(c.get("charge", 0)) for c in charges_a if isinstance(c, Mapping)]
+        vals_b = [float(c.get("charge", 0)) for c in charges_b if isinstance(c, Mapping)]
+        if vals_a and vals_b:
+            delta["charge_count_a"] = len(vals_a)
+            delta["charge_count_b"] = len(vals_b)
+            if len(vals_a) == len(vals_b):
+                diffs = [abs(b - a) for a, b in zip(vals_a, vals_b)]
+                delta["max_charge_diff"] = round(max(diffs), 6) if diffs else None
+                delta["mean_charge_diff"] = round(sum(diffs) / len(diffs), 6) if diffs else None
+
+    delta["scf_converged_a"] = bool(result_a.get("scf_converged"))
+    delta["scf_converged_b"] = bool(result_b.get("scf_converged"))
+    delta["both_converged"] = delta["scf_converged_a"] and delta["scf_converged_b"]
+
+    delta["atom_count_a"] = _safe_int(result_a.get("n_atoms"))
+    delta["atom_count_b"] = _safe_int(result_b.get("n_atoms"))
+
+    return delta
+
+
 __all__ = [
     "HARTREE_TO_EV", "HARTREE_TO_KCAL", "BOHR_TO_ANGSTROM", "EV_TO_KCAL",
     "DEFAULT_METHOD", "DEFAULT_BASIS", "ESP_PRESETS_DATA",
     "coerce_multiplicity_for_structure",
     "run_resolve_structure", "run_geometry_analysis", "run_single_point",
     "run_partial_charges", "run_orbital_preview", "run_esp_map",
-    "run_geometry_optimization", "run_analyze",
+    "run_geometry_optimization", "run_analyze", "compute_delta",
 ]

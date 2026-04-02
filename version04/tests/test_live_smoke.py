@@ -3,24 +3,27 @@ from __future__ import annotations
 import os
 
 import pytest
+from dotenv import dotenv_values
 
 from qcviz_mcp.services.gemini_agent import GeminiAgent
 from qcviz_mcp.services.molchat_client import MolChatClient
 
 
-def _live_enabled() -> bool:
-    return os.getenv("RUN_LIVE_API_TESTS", "").strip().lower() in {"1", "true", "yes", "on"}
+def _load_gemini_key() -> str:
+    key = str(os.getenv("GEMINI_API_KEY") or "").strip()
+    if key:
+        return key
+    env_values = dotenv_values(".env")
+    return str(env_values.get("GEMINI_API_KEY") or "").strip()
 
 
 @pytest.mark.live
 def test_live_gemini_planner_smoke() -> None:
-    if not _live_enabled():
-        pytest.skip("Set RUN_LIVE_API_TESTS=1 to enable live external API smoke tests.")
-    if not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("GEMINI_API_KEY is not configured.")
+    gemini_key = _load_gemini_key()
+    assert gemini_key, "GEMINI_API_KEY must be configured (env or .env)."
 
-    agent = GeminiAgent()
-    result = agent.parse_sync("water HOMO 보여줘")
+    agent = GeminiAgent(api_key=gemini_key)
+    result = agent.parse_sync("show HOMO for water")
 
     assert result is not None
     plan = result.to_plan_dict()
@@ -32,9 +35,6 @@ def test_live_gemini_planner_smoke() -> None:
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_live_molchat_api_smoke() -> None:
-    if not _live_enabled():
-        pytest.skip("Set RUN_LIVE_API_TESTS=1 to enable live external API smoke tests.")
-
     client = MolChatClient()
     try:
         resolved = await client.resolve(["water"])

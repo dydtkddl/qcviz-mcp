@@ -1,20 +1,34 @@
 """Session-scoped continuation state for chat/compute follow-up handling."""
 from __future__ import annotations
 
+import logging
 import time
 from collections import OrderedDict
 from threading import Lock
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, TypedDict
 
 _STATE_MAX_SESSIONS = 1024
 _STATE_TTL_SECONDS = 3600 * 4
 _RESULT_INDEX_MAX = 2048
 _EVICTION_SCAN_LIMIT = 64
+_MAX_MOLECULE_HISTORY = 10
 
 _STATE_LOCK = Lock()
 _INMEMORY_STATE: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _RESULT_INDEX_LOCK = Lock()
 _RESULT_INDEX: "OrderedDict[str, Dict[str, str]]" = OrderedDict()
+logger = logging.getLogger(__name__)
+
+
+class ActiveMolecule(TypedDict, total=False):
+    """Semantic context for the molecule currently under discussion."""
+
+    canonical_name: str
+    smiles: str
+    formula: str
+    cid: int
+    source: str
+    set_at_turn: int
 
 
 def _safe_str(value: Any, default: str = "") -> str:
@@ -222,6 +236,103 @@ def clear_conversation_state(session_id: str, *, manager: Optional[Any] = None) 
             pass
 
 
+def _is_context_tracking_enabled() -> bool:
+    """Return True when active-molecule tracking is enabled."""
+    import os
+
+    return os.getenv("QCVIZ_CONTEXT_TRACKING_ENABLED", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def get_active_molecule(
+    session_id: str,
+    *,
+    manager: Optional[Any] = None,
+) -> ActiveMolecule | None:
+    """Return the active molecule for *session_id*, if present."""
+    state = load_conversation_state(session_id, manager=manager)
+    molecule = state.get("active_molecule")
+    if not isinstance(molecule, Mapping) or not molecule.get("canonical_name"):
+        return None
+    return dict(molecule)
+
+
+def set_active_molecule(
+    session_id: str,
+    molecule: ActiveMolecule,
+    *,
+    manager: Optional[Any] = None,
+) -> None:
+    """Set or replace the active molecule for *session_id*."""
+    if not _is_context_tracking_enabled():
+        return
+
+    canonical_name = _safe_str(molecule.get("canonical_name"))
+    if not canonical_name:
+        return
+
+    state = load_conversation_state(session_id, manager=manager)
+    history = [
+        dict(item)
+        for item in list(state.get("molecule_history") or [])
+        if isinstance(item, Mapping) and item.get("canonical_name")
+    ]
+
+    previous = state.get("active_molecule")
+    if (
+        isinstance(previous, Mapping)
+        and previous.get("canonical_name")
+        and _safe_str(previous.get("canonical_name")) != canonical_name
+    ):
+        history.insert(0, dict(previous))
+        history = history[:_MAX_MOLECULE_HISTORY]
+
+    stored_molecule = dict(molecule)
+    stored_molecule["canonical_name"] = canonical_name
+    update_conversation_state(
+        session_id,
+        {
+            "active_molecule": stored_molecule,
+            "molecule_history": history,
+        },
+        manager=manager,
+    )
+    logger.debug("active_molecule updated: session=%s name=%s", session_id, canonical_name)
+
+
+def clear_active_molecule(
+    session_id: str,
+    *,
+    manager: Optional[Any] = None,
+) -> None:
+    """Clear the active molecule while preserving molecule history."""
+    current = load_conversation_state(session_id, manager=manager)
+    if not current:
+        return
+
+    updated = dict(current)
+    updated["active_molecule"] = None
+    save_conversation_state(session_id, updated, manager=manager)
+    logger.debug("active_molecule cleared: session=%s", session_id)
+
+
+def get_molecule_history(
+    session_id: str,
+    *,
+    manager: Optional[Any] = None,
+) -> list[ActiveMolecule]:
+    """Return previously active molecules, most recent first."""
+    state = load_conversation_state(session_id, manager=manager)
+    return [
+        dict(item)
+        for item in list(state.get("molecule_history") or [])
+        if isinstance(item, Mapping) and item.get("canonical_name")
+    ]
+
+
 def state_store_stats() -> Dict[str, Any]:
     with _STATE_LOCK:
         state_count = len(_INMEMORY_STATE)
@@ -270,8 +381,21 @@ def build_execution_state(
         charge=charge,
         multiplicity=multiplicity,
     )
+    pending_active_molecule: ActiveMolecule | None = None
+    if structure_name:
+        pending_active_molecule = {
+            "canonical_name": structure_name,
+            "source": "compute_result",
+            "set_at_turn": 0,
+        }
+        smiles = _safe_str(result.get("smiles"))
+        formula = _safe_str(result.get("formula"))
+        if smiles:
+            pending_active_molecule["smiles"] = smiles
+        if formula:
+            pending_active_molecule["formula"] = formula
 
-    return {
+    execution_state = {
         "session_id": session_id,
         "last_job_id": _safe_str(job_id),
         "last_structure_query": structure_query,
@@ -285,6 +409,7 @@ def build_execution_state(
         "canonical_result_key": canonical_result_key,
         "available_result_tabs": [key for key, enabled in available.items() if enabled],
         "analysis_history": analysis_history,
+        "_pending_active_molecule": pending_active_molecule,
         "last_resolved_artifact": {
             "structure_query": structure_query,
             "structure_name": structure_name,
@@ -298,6 +423,17 @@ def build_execution_state(
         },
     }
 
+    if isinstance(result, dict) and result.get("comparison"):
+        _delta = result.get("delta") or {}
+        execution_state["last_comparison"] = {
+            "molecule_a": _safe_str(_delta.get("molecule_a")),
+            "molecule_b": _safe_str(_delta.get("molecule_b")),
+            "energy_delta_ev": _delta.get("energy_delta_ev"),
+            "gap_delta_ev": _delta.get("gap_delta_ev"),
+        }
+
+    return execution_state
+
 
 def update_conversation_state_from_execution(
     payload: Mapping[str, Any],
@@ -310,7 +446,19 @@ def update_conversation_state_from_execution(
     if not session_id:
         return {}
     execution_state = build_execution_state(payload, result, job_id=job_id)
+    pending_active_molecule = execution_state.pop("_pending_active_molecule", None)
     canonical_result_key = _safe_str(execution_state.get("canonical_result_key"))
     if canonical_result_key and _safe_str(job_id):
         index_completed_result(session_id, canonical_result_key, _safe_str(job_id))
-    return update_conversation_state(session_id, execution_state, manager=manager)
+    merged_state = update_conversation_state(session_id, execution_state, manager=manager)
+    if (
+        isinstance(pending_active_molecule, Mapping)
+        and _safe_str(pending_active_molecule.get("canonical_name"))
+    ):
+        set_active_molecule(
+            session_id,
+            dict(pending_active_molecule),
+            manager=manager,
+        )
+        merged_state = load_conversation_state(session_id, manager=manager)
+    return merged_state

@@ -7,33 +7,29 @@ import logging
 import pathlib
 import traceback
 import os
-import asyncio
-import concurrent.futures
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
-from typing import Any, Dict, List, Optional, Tuple
-from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
-from qcviz_mcp.backends.pyscf_backend import PySCFBackend, ESPResult, _cli
+from qcviz_mcp.backends.pyscf_backend import PySCFBackend, _cli
 from qcviz_mcp.backends.viz_backend import (
     Py3DmolBackend,
     DashboardPayload,
-    CubeNormalizer,
 )
 
-from qcviz_mcp.backends.registry import registry
 from qcviz_mcp.mcp_server import mcp
 from qcviz_mcp.security import (
-    validate_atom_spec_strict, validate_path, validate_basis,
-    default_bucket, validate_atom_spec as _validate_atom_spec,
-    validate_path as _validate_file_path, _PROJECT_ROOT
+    default_bucket,
+    validate_atom_spec_strict,
+    validate_basis,
+    validate_path,
 )
-from qcviz_mcp.observability import traced_tool, metrics, ToolInvocation
+from qcviz_mcp.observability import metrics, ToolInvocation
 try:
     from qcviz_mcp.execution.worker import _executor
 except Exception:

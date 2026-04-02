@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import logging
 import os
 import threading
@@ -16,7 +15,9 @@ import traceback
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+from qcviz_mcp.errors import ComparisonError
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,44 @@ class JobManager:
         with self._lock:
             self._futures[job_id] = future
         return job_id
+
+    def submit_comparison(
+        self,
+        target: Callable[..., Any],
+        *,
+        kwargs_a: Dict[str, Any],
+        kwargs_b: Dict[str, Any],
+        label: str = "comparison",
+    ) -> Dict[str, str]:
+        """Submit paired jobs for comparison and return both job IDs."""
+        try:
+            job_id_a = self.submit(
+                target=target,
+                kwargs=kwargs_a,
+                label=f"{label}_A",
+                name=f"{label}_A",
+            )
+            job_id_b = self.submit(
+                target=target,
+                kwargs=kwargs_b,
+                label=f"{label}_B",
+                name=f"{label}_B",
+            )
+        except Exception as exc:
+            raise ComparisonError(
+                f"Comparison submission failed: {exc}",
+                mol_a=str(kwargs_a.get("structure_query") or ""),
+                mol_b=str(kwargs_b.get("structure_query") or ""),
+            ) from exc
+        logger.info(
+            "Comparison submitted: %s (A=%s, B=%s)",
+            label, job_id_a, job_id_b,
+        )
+        return {
+            "job_id_a": job_id_a,
+            "job_id_b": job_id_b,
+            "comparison_label": label,
+        }
 
     def get(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:

@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 # The list of target files to include in the context bundle

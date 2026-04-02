@@ -5,6 +5,7 @@ Base URL: http://psid.aizen.co.kr/molchat
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -76,23 +77,61 @@ class MolChatClient:
     async def close(self) -> None:
         return None
 
+    @staticmethod
+    async def _maybe_await(value: Any) -> Any:
+        if inspect.isawaitable(value):
+            return await value
+        return value
+
+    async def _close_client(self, client: Any) -> None:
+        closer = getattr(client, "aclose", None)
+        if not callable(closer):
+            return
+        try:
+            await self._maybe_await(closer())
+        except Exception:
+            logger.debug("Ignoring MolChat client close failure", exc_info=True)
+
+    async def _raise_for_status(self, response: Any) -> None:
+        handler = getattr(response, "raise_for_status", None)
+        if not callable(handler):
+            return
+        await self._maybe_await(handler())
+
+    async def _json(self, response: Any) -> Any:
+        reader = getattr(response, "json", None)
+        if not callable(reader):
+            return {}
+        return await self._maybe_await(reader())
+
+    async def _text(self, response: Any) -> str:
+        value = getattr(response, "text", "")
+        if callable(value):
+            value = value()
+        value = await self._maybe_await(value)
+        return str(value or "")
+
     # ── health ─────────────────────────────────────────────────
 
     async def health_live(self) -> bool:
+        client = self._build_client()
         try:
-            async with self._build_client() as client:
-                resp = await client.get("/api/v1/health/live")
-                return resp.status_code == 200
+            resp = await client.get("/api/v1/health/live")
+            return resp.status_code == 200
         except Exception:
             return False
+        finally:
+            await self._close_client(client)
 
     async def health_ready(self) -> bool:
+        client = self._build_client()
         try:
-            async with self._build_client() as client:
-                resp = await client.get("/api/v1/health/ready")
-                return resp.status_code == 200
+            resp = await client.get("/api/v1/health/ready")
+            return resp.status_code == 200
         except Exception:
             return False
+        finally:
+            await self._close_client(client)
 
     # ── resolve ────────────────────────────────────────────────
 
@@ -114,13 +153,16 @@ class MolChatClient:
             return []
 
         names_param = ",".join(n.strip() for n in names if n.strip())
-        async with self._build_client() as client:
+        client = self._build_client()
+        try:
             resp = await client.get(
                 "/api/v1/molecules/resolve",
                 params={"names": names_param},
             )
-            resp.raise_for_status()
-            data = resp.json()
+            await self._raise_for_status(resp)
+            data = await self._json(resp)
+        finally:
+            await self._close_client(client)
         resolved = data.get("resolved", [])
         return [r for r in resolved if r.get("cid")]
 
@@ -136,13 +178,16 @@ class MolChatClient:
         if not cleaned:
             return {"query": cleaned, "results": [], "total": 0, "resolve_method": None, "resolve_suggestions": []}
 
-        async with self._build_client() as client:
+        client = self._build_client()
+        try:
             resp = await client.get(
                 "/api/v1/molecules/search",
                 params={"q": cleaned, "limit": int(limit or 5)},
             )
-            resp.raise_for_status()
-            data = resp.json()
+            await self._raise_for_status(resp)
+            data = await self._json(resp)
+        finally:
+            await self._close_client(client)
         if not isinstance(data, dict):
             return {"query": cleaned, "results": [], "total": 0, "resolve_method": None, "resolve_suggestions": []}
         data.setdefault("query", cleaned)
@@ -208,7 +253,8 @@ class MolChatClient:
             return {"query": cleaned, "query_mode": "empty", "candidates": [], "notes": []}
 
         try:
-            async with self._build_client() as client:
+            client = self._build_client()
+            try:
                 resp = await client.post(
                     "/api/v1/molecules/interpret",
                     json={
@@ -224,8 +270,10 @@ class MolChatClient:
                         },
                     },
                 )
-                resp.raise_for_status()
-                data = resp.json()
+                await self._raise_for_status(resp)
+                data = await self._json(resp)
+            finally:
+                await self._close_client(client)
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code if exc.response is not None else None
             if status in {404, 405, 501}:
@@ -262,15 +310,18 @@ class MolChatClient:
         if not query or not query.strip():
             return None
 
-        async with self._build_client() as client:
+        client = self._build_client()
+        try:
             resp = await client.get(
                 "/api/v1/molecules/card",
                 params={"q": query.strip()},
             )
             if resp.status_code == 404:
                 return None
-            resp.raise_for_status()
-            data = resp.json()
+            await self._raise_for_status(resp)
+            data = await self._json(resp)
+        finally:
+            await self._close_client(client)
         return data if data.get("cid") else None
 
     # ── generate-3d SDF ───────────────────────────────────────
@@ -300,15 +351,18 @@ class MolChatClient:
         if optimize_xtb:
             params["optimize_xtb"] = "true"
 
-        async with self._build_client() as client:
+        client = self._build_client()
+        try:
             resp = await client.get(
                 "/api/v1/molecules/generate-3d/sdf",
                 params=params,
             )
             if resp.status_code == 404:
                 return None
-            resp.raise_for_status()
-            text = resp.text.strip()
+            await self._raise_for_status(resp)
+            text = (await self._text(resp)).strip()
+        finally:
+            await self._close_client(client)
         if not text or "V2000" not in text:
             logger.warning(
                 "MolChat generate-3d 응답에 V2000 MOL 블록 없음 / "

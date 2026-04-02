@@ -390,7 +390,7 @@ def _validate_llm_smiles(smiles: str, original_formula: str) -> Optional[str]:
         return None
     if formula_heavy and len(formula_heavy) >= 2:
         overlap_ratio = len(formula_heavy & smiles_heavy) / len(formula_heavy)
-        if overlap_ratio < 0.5:
+        if overlap_ratio <= 0.5:
             logger.info(
                 "LLM SMILES rejected due to low element overlap: formula=%s smiles=%s overlap=%.2f formula_elements=%s smiles_elements=%s",
                 original,
@@ -409,7 +409,9 @@ def _validate_llm_smiles(smiles: str, original_formula: str) -> Optional[str]:
         canonical,
         heavy_atoms,
     )
-    return canonical
+    # Keep caller-provided token order to preserve user-facing/result-contract
+    # expectations while still validating chemistry with RDKit.
+    return cleaned
 
 _BRACKET_ATOM_RE = re.compile(r"\[([^\]]+)\]")
 _CHARGE_TOKEN_RE = re.compile(r"(\+{1,4}|-{1,4}|[+-]\d+|\d+[+-])")
@@ -777,11 +779,17 @@ class StructureResolver:
             ranking_notes=[",".join(item.get("notes") or []) for item in ranked_queries],
         )
 
-    async def _try_molchat_with_search_fallback(self, name: str) -> Optional[StructureResult]:
-        """Run the legacy MolChat resolve path, then fall back to search/autocorrect."""
-        result = await self._try_molchat(name)
-        if result:
-            return result
+    async def _try_molchat_with_search_fallback(
+        self,
+        name: str,
+        *,
+        skip_direct_resolve: bool = False,
+    ) -> Optional[StructureResult]:
+        """Run MolChat resolve and optionally fall back to search/autocorrect."""
+        if not skip_direct_resolve:
+            result = await self._try_molchat(name)
+            if result:
+                return result
 
         cleaned = str(name or "").strip()
         if not cleaned:
@@ -1078,10 +1086,49 @@ class StructureResolver:
                 logger.debug("Cache hit: %s", cache_key)
                 return cached
 
+        candidate_queries = list(query_plan["candidate_queries"])
+        if query_plan.get("mixed_input"):
+            raw_literal = str(query_plan.get("raw_query") or "").strip().lower()
+            filtered_candidates = [
+                str(item).strip()
+                for item in candidate_queries
+                if str(item).strip() and str(item).strip().lower() != raw_literal
+            ]
+            if filtered_candidates:
+                candidate_queries = filtered_candidates
+                query_plan["candidate_queries"] = filtered_candidates
+
         # Step 2: Try MolChat pipeline across candidate queries
         saw_infrastructure_failure = False
-        for candidate in query_plan["candidate_queries"]:
-            result = await self._try_molchat_with_search_fallback(candidate)
+        if len(candidate_queries) > 1:
+            for candidate in candidate_queries:
+                result = await self._try_molchat(candidate)
+                if self._last_failure_class == "infrastructure":
+                    saw_infrastructure_failure = True
+                if result:
+                    if not self._matches_expected_charge(result.smiles, query_plan.get("expected_charge")):
+                        logger.info(
+                            "Rejected MolChat result due to charge mismatch: query=%s candidate=%s expected=%s smiles=%s",
+                            original_query,
+                            candidate,
+                            query_plan.get("expected_charge"),
+                            result.smiles,
+                        )
+                        continue
+                    result.name = str(result.name or query_plan.get("display_query") or original_query)
+                    result.resolved_structure_name = str(result.resolved_structure_name or result.name or original_query)
+                    result.resolved_smiles = str(result.resolved_smiles or result.smiles or "").strip() or None
+                    if query_plan.get("condensed_formula"):
+                        result.structure_query_raw = str(result.structure_query_raw or original_query)
+                    result.query_plan = query_plan
+                    self._cache_put(candidate.lower().strip(), result)
+                    return result
+
+        for candidate in candidate_queries:
+            result = await self._try_molchat_with_search_fallback(
+                candidate,
+                skip_direct_resolve=len(candidate_queries) > 1,
+            )
             if self._last_failure_class == "infrastructure":
                 saw_infrastructure_failure = True
             if result:
@@ -1106,7 +1153,7 @@ class StructureResolver:
         # Step 3: Try PubChem fallback across candidate queries
         pubchem_enabled = os.getenv("PUBCHEM_FALLBACK", "true").lower() in ("true", "1", "yes")
         if pubchem_enabled:
-            for candidate in query_plan["candidate_queries"]:
+            for candidate in candidate_queries:
                 result = await self._try_pubchem(candidate)
                 if self._last_failure_class == "infrastructure":
                     saw_infrastructure_failure = True

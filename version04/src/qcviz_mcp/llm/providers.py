@@ -5,8 +5,8 @@ LLM Provider implementations (Gemini, OpenAI).
 import json
 import os
 import logging
-from typing import Optional
-from pydantic import BaseModel, Field, ValidationError
+from typing import Dict, Optional
+from pydantic import BaseModel, Field
 
 from qcviz_mcp.env_bootstrap import bootstrap_runtime_env
 from .prompts import SYSTEM_PROMPT
@@ -32,6 +32,21 @@ except ImportError:
         suggested_focus_tab: Optional[str] = None
 
 logger = logging.getLogger("qcviz_mcp.llm.providers")
+
+
+_TIMEOUT_PROFILES: Dict[str, Dict[str, float]] = {
+    "default": {"timeout": 30.0, "max_retries": 2},
+    "action_planner": {"timeout": 20.0, "max_retries": 2},
+    "ingress_rewrite": {"timeout": 15.0, "max_retries": 1},
+    "modification_intent": {"timeout": 15.0, "max_retries": 1},
+    "comparison_explain": {"timeout": 25.0, "max_retries": 2},
+    "grounding_decider": {"timeout": 15.0, "max_retries": 1},
+}
+
+
+def get_timeout_profile(stage: str) -> Dict[str, float]:
+    """Return timeout and retry settings for a pipeline stage."""
+    return dict(_TIMEOUT_PROFILES.get(stage, _TIMEOUT_PROFILES["default"]))
 
 try:
     from google import genai

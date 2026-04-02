@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
 
 # 원소 기호 집합 (Z=1-118)
 _ELEMENTS = frozenset({

@@ -182,6 +182,69 @@ async def run_compute_job(ctx: Dict[str, Any], job_id: str, payload: Mapping[str
             pass
 
 
+async def run_comparison_job(
+    ctx: Dict[str, Any],
+    job_id: str,
+    payload: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Execute a comparison calculation in the Arq worker."""
+    store = _build_store()
+    worker_state: Dict[str, Any] = {
+        "job_id": job_id,
+        "worker_id": _worker_id(),
+        "queue": _safe_str(os.getenv("QCVIZ_ARQ_QUEUE_NAME"), "qcviz-jobs"),
+        "type": "comparison",
+    }
+    ctx["_qcviz_active_jobs"] = int(ctx.get("_qcviz_active_jobs") or 0) + 1
+    store.mark_running(job_id, worker_id=_worker_id())
+    _update_worker_heartbeat("busy", extra=dict(worker_state))
+    stop_event: asyncio.Event = asyncio.Event()
+    heartbeat_task = asyncio.create_task(_busy_heartbeat_pulse(stop_event, worker_state))
+    progress_callback = _progress_callback_factory(store, job_id, worker_state)
+
+    try:
+        from qcviz_mcp.web.routes.compute import _run_comparison_compute
+
+        payload_a = dict(payload.get("payload_a") or {})
+        payload_b = dict(payload.get("payload_b") or {})
+        job_type = _safe_str(payload.get("job_type"), "analyze") or "analyze"
+        result = await asyncio.to_thread(
+            _run_comparison_compute,
+            payload_a,
+            payload_b,
+            job_type=job_type,
+            progress_callback=progress_callback,
+        )
+        store.mark_completed(job_id, result)
+        store.clear_cancel(job_id)
+        _update_worker_heartbeat("idle", extra={"job_id": job_id, "status": "completed"})
+        return {"ok": True, "job_id": job_id}
+    except ExternalJobCancelled as exc:
+        store.mark_cancelled(job_id, detail=str(exc))
+        store.clear_cancel(job_id)
+        _update_worker_heartbeat("idle", extra={"job_id": job_id, "status": "cancelled"})
+        return {"ok": False, "job_id": job_id, "cancelled": True}
+    except Exception as exc:
+        store.mark_failed(
+            job_id,
+            message=str(exc),
+            error={
+                "message": str(exc),
+                "type": exc.__class__.__name__,
+            },
+        )
+        store.clear_cancel(job_id)
+        _update_worker_heartbeat("idle", extra={"job_id": job_id, "status": "failed"})
+        return {"ok": False, "job_id": job_id, "error": str(exc)}
+    finally:
+        ctx["_qcviz_active_jobs"] = max(0, int(ctx.get("_qcviz_active_jobs") or 1) - 1)
+        stop_event.set()
+        try:
+            await heartbeat_task
+        except Exception:
+            pass
+
+
 async def startup(ctx: Dict[str, Any]) -> None:
     ctx["_qcviz_active_jobs"] = 0
     stop_event: asyncio.Event = asyncio.Event()
@@ -208,7 +271,7 @@ async def shutdown(ctx: Dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [run_compute_job]
+    functions = [run_compute_job, run_comparison_job]
     on_startup = startup
     on_shutdown = shutdown
     queue_name = _safe_str(os.getenv("QCVIZ_ARQ_QUEUE_NAME"), "qcviz-jobs")

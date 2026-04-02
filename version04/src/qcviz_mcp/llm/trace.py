@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from qcviz_mcp.observability import metrics
+from qcviz_mcp.observability import extract_context_tracking, metrics
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,10 @@ class PipelineTrace:
     serve_mode: Optional[str] = None
     llm_vs_heuristic_agreement: Optional[bool] = None
     total_latency_ms: Optional[float] = None
+    context_molecule_name: Optional[str] = None
+    context_molecule_smiles: Optional[str] = None
+    implicit_follow_up_type: Optional[str] = None
+    follow_up_detected: Optional[bool] = None
 
     def to_log_dict(self) -> Dict[str, Any]:
         return {
@@ -42,6 +46,7 @@ class PipelineTrace:
             "serve_mode": self.serve_mode,
             "llm_vs_heuristic_agreement": self.llm_vs_heuristic_agreement,
             "total_latency_ms": self.total_latency_ms,
+            "context_tracking": extract_context_tracking(self),
         }
 
 
@@ -69,3 +74,44 @@ def emit_pipeline_trace(trace: PipelineTrace) -> None:
             else "pipeline.llm_vs_heuristic_agreement.mismatch"
         )
     logger.info("QCViz pipeline trace: %s", trace.to_log_dict())
+
+
+def _now_iso() -> str:
+    """Return current UTC time in ISO 8601 format."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def trace_modification_span(
+    base_molecule: str,
+    from_group: str | None,
+    to_group: str | None,
+    candidate_count: int,
+) -> dict[str, Any]:
+    """Create a trace span dict for a modification exploration."""
+    return {
+        "span_type": "modification_exploration",
+        "base_molecule": base_molecule,
+        "from_group": from_group,
+        "to_group": to_group,
+        "candidate_count": candidate_count,
+        "timestamp": _now_iso(),
+    }
+
+
+def trace_comparison_span(
+    mol_a: str,
+    mol_b: str,
+    job_ids: tuple[str, str] | None = None,
+    status: str = "submitted",
+) -> dict[str, Any]:
+    """Create a trace span dict for a comparison workflow."""
+    return {
+        "span_type": "comparison",
+        "mol_a": mol_a,
+        "mol_b": mol_b,
+        "job_ids": list(job_ids) if job_ids else [],
+        "status": status,
+        "timestamp": _now_iso(),
+    }

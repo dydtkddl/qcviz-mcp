@@ -1,7 +1,154 @@
 from __future__ import annotations
 
 import re
+from importlib import import_module
 from typing import Any, Dict, List, Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+_SUBSTITUENT_TRANSLATOR: Optional[Any] = None
+_SUBSTITUENT_TERM_RE = r"[A-Za-z가-힣][A-Za-z0-9가-힣\-]{0,30}"
+_MODIFICATION_SWAP_RE = re.compile(
+    rf"(?P<from_ko>{_SUBSTITUENT_TERM_RE})\s*(?:그룹|작용기|기능기)?\s*(?:를|을)?\s*"
+    rf"(?:(?:과|와|and)\s*)?(?P<to_ko>{_SUBSTITUENT_TERM_RE})\s*(?:그룹|작용기|기능기)?\s*(?:로|으로|to|with)?\s*"
+    r"(?:바꾸|바꿔|교체|치환|변경|swap|change|replace|substitute)",
+    re.IGNORECASE,
+)
+_MODIFICATION_REPLACE_RE = re.compile(
+    rf"(?:replace|substitute|교체|치환|변경|바꾸|바꿔)\s*(?:(?:the\s+)?(?P<from_ko>{_SUBSTITUENT_TERM_RE})\s*)?"
+    rf"(?:with|to|로|으로)\s*(?:(?:the\s+)?(?P<to_ko>{_SUBSTITUENT_TERM_RE}))",
+    re.IGNORECASE,
+)
+_MODIFICATION_CONDITIONAL_RE_P2 = re.compile(
+    r"\b(?:if|what if|만약)\b.*\b(?:swap|replace|change|substitute|교체|치환|변경|바꾸|바꿔)\b.*",
+    re.IGNORECASE,
+)
+_MODIFICATION_ADD_RE = re.compile(
+    rf"(?:(?:add|attach|append|introduce|insert|추가|첨가|붙이|넣)\s*(?:a\s+|an\s+|the\s+)?(?P<to_ko>{_SUBSTITUENT_TERM_RE})|"
+    rf"(?P<to_ko_alt>{_SUBSTITUENT_TERM_RE})\s*(?:를|을)?\s*(?:추가|첨가|붙이|넣|add|attach|append|introduce|insert))",
+    re.IGNORECASE,
+)
+_MODIFICATION_REMOVE_RE = re.compile(
+    rf"(?:(?:remove|delete|detach|drop|제거|삭제|탈착|빼|없애)\s*(?:the\s+)?(?P<from_ko>{_SUBSTITUENT_TERM_RE})|"
+    rf"(?P<from_ko_alt>{_SUBSTITUENT_TERM_RE})\s*(?:를|을)?\s*(?:제거|삭제|탈착|빼|없애|remove|delete|detach|drop))",
+    re.IGNORECASE,
+)
+_LOCAL_SUBSTITUENT_CANONICALS: Dict[str, str] = {
+    "hydrogen": "hydrogen",
+    "hydro": "hydrogen",
+    "메틸": "methyl",
+    "메틸기": "methyl",
+    "methyl": "methyl",
+    "아미노": "amino",
+    "아미노기": "amino",
+    "아민": "amino",
+    "에틸": "ethyl",
+    "에틸기": "ethyl",
+    "ethyl": "ethyl",
+    "프로필": "propyl",
+    "propyl": "propyl",
+    "부틸": "butyl",
+    "butyl": "butyl",
+    "하이드록시": "hydroxy",
+    "hydroxy": "hydroxy",
+    "hydroxyl": "hydroxy",
+    "니트로": "nitro",
+    "니트로기": "nitro",
+    "nitro": "nitro",
+    "시아노": "cyano",
+    "사이아노": "cyano",
+    "cyano": "cyano",
+    "플루오로": "fluoro",
+    "fluoro": "fluoro",
+    "클로로": "chloro",
+    "chloro": "chloro",
+    "브로모": "bromo",
+    "bromo": "bromo",
+    "아이오도": "iodo",
+    "iodo": "iodo",
+    "메톡시": "methoxy",
+    "methoxy": "methoxy",
+    "에톡시": "ethoxy",
+    "ethoxy": "ethoxy",
+    "포르밀": "formyl",
+    "formyl": "formyl",
+    "아세틸": "acetyl",
+    "acetyl": "acetyl",
+    "카르복실": "carboxyl",
+    "carboxyl": "carboxyl",
+    "벤실": "benzyl",
+    "benzyl": "benzyl",
+    "페닐": "phenyl",
+    "phenyl": "phenyl",
+}
+
+_LOCAL_SUBSTITUENT_LOOKUP: Dict[str, str] = {
+    re.sub(r"[\s\-]+", "", key.lower()): value for key, value in _LOCAL_SUBSTITUENT_CANONICALS.items()
+}
+_SUBSTITUENT_STRIP_SUFFIX_RE = re.compile(
+    r"(?:group|substituent|작용기|기능기|치환기|기로|으로는|로는|기를|기와|기과|기만|기|를|을|이|가|은|는|와|과|만|도|에서|에|의)$",
+    re.IGNORECASE,
+)
+
+
+def _get_substituent_translator() -> Optional[Any]:
+    global _SUBSTITUENT_TRANSLATOR
+    if _SUBSTITUENT_TRANSLATOR is not None:
+        return _SUBSTITUENT_TRANSLATOR
+    try:
+        module = import_module("qcviz_mcp.services.ko_aliases")
+        translator = getattr(module, "translate_substituent", None)
+        _SUBSTITUENT_TRANSLATOR = translator if callable(translator) else False
+    except Exception:
+        _SUBSTITUENT_TRANSLATOR = False
+    return _SUBSTITUENT_TRANSLATOR if _SUBSTITUENT_TRANSLATOR else None
+
+
+def _normalize_substituent_token(token: str) -> str:
+    value = str(token or "").strip().lower()
+    value = re.sub(r"[\"'`“”‘’\[\]{}()<>.,;:!?]", "", value)
+    value = re.sub(r"\s+", "", value)
+    prev = None
+    while value and value != prev:
+        prev = value
+        value = _SUBSTITUENT_STRIP_SUFFIX_RE.sub("", value).strip()
+    return value
+
+
+def _canonicalize_substituent(token: str) -> Optional[str]:
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+
+    translator = _get_substituent_translator()
+    if translator is not None:
+        try:
+            translated = translator(raw) or translator(_normalize_substituent_token(raw))
+            if translated:
+                return str(translated).strip().lower()
+        except Exception:
+            pass
+
+    normalized = _normalize_substituent_token(raw)
+    if not normalized:
+        return None
+
+    direct = _LOCAL_SUBSTITUENT_LOOKUP.get(normalized)
+    if direct:
+        return direct
+
+    if normalized.endswith("기"):
+        trimmed = normalized[:-1]
+        if trimmed in _LOCAL_SUBSTITUENT_LOOKUP:
+            return _LOCAL_SUBSTITUENT_LOOKUP[trimmed]
+
+    compact = re.sub(r"[\s\-]+", "", normalized)
+    if compact in _LOCAL_SUBSTITUENT_LOOKUP:
+        return _LOCAL_SUBSTITUENT_LOOKUP[compact]
+
+    return None
+
 
 KO_TO_EN: Dict[str, str] = {
     "물": "water",
@@ -268,6 +415,32 @@ _FOLLOW_UP_QUERY_CUE_RE = re.compile(
     r"이번엔|이번에는|"
     r"ㅇㅇ|ㄱㄱ|"
     r"(?:\bgo(?:\s+go)?\b))",
+    re.IGNORECASE,
+)
+_IMPLICIT_FOLLOW_UP_MODIFICATION_RE = re.compile(
+    r"(?:"
+    r"\b(?:swap|replace|change|substitute|교체|바꿔|바꾸|치환|변경|바꾸어|제거|삭제|추가)\b"
+    r"|"
+    r"[가-힣]+(?:기|그룹)?\s*(?:을|를|로|으로|에)?\s*(?:교체|치환|바꿔|변경|제거|추가)"
+    r")"
+)
+_IMPLICIT_FOLLOW_UP_CONDITIONAL_RE = re.compile(
+    r"(?:if|만약|what if)\b.*(?:swap|replace|change|substitute|교체|바꾸|치환|변경)",
+    re.IGNORECASE,
+)
+_IMPLICIT_FOLLOW_UP_COMPARISON_RE = re.compile(
+    r"\b(?:compare|compare with|comparison|difference|different|차이|비교|isomer|versus|vs)\b",
+    re.IGNORECASE,
+)
+_IMPLICIT_FOLLOW_UP_SUBJECT_ABSENT_RE = re.compile(
+    r"^(?:if|what if|만약|그러면|그럼|그냥)",
+    re.IGNORECASE,
+)
+_IMPLICIT_FOLLOW_UP_REMAINING_PROGRESS_RE = re.compile(
+    r"(?:\b(?:rest|remaining|the rest|continue|carry on|keep going)\b|"
+    r"나머지|이어서|계속|마저|ㄱㄱ|ㅁㅁ)"
+    r".{0,30}"
+    r"(?:분석|계산|처리|해석|analysis|calculate|compute|go)",
     re.IGNORECASE,
 )
 _FOLLOW_UP_ANALYSIS_SUFFIX_RE = re.compile(
@@ -2179,3 +2352,193 @@ def normalize_user_text(text: str) -> Dict[str, Any]:
         "unknown_acronyms": list(query_routing.get("unknown_acronyms") or []),
         "routing_reasoning_notes": list(query_routing.get("reasoning_notes") or []),
     }
+
+
+def parse_modification_intent(text: str) -> Optional[Dict[str, Any]]:
+    """Parse substituent modification intent from user text."""
+    raw = _normalize_formula_text(str(text or "").strip())
+    if not raw:
+        return None
+    search_text = _space_korean_compounds(raw)
+    if not search_text:
+        return None
+
+    if not re.search(
+        r"\b(?:swap|replace|change|substitute|add|remove|delete|detach|drop)\b|교체|치환|변경|바꾸|바꿔|추가|첨가|붙이|제거|삭제|없애|빼",
+        search_text,
+        re.IGNORECASE,
+    ):
+        return None
+
+    def _extract_group(match: re.Match[str], *names: str) -> str:
+        group_dict = match.groupdict()
+        for name in names:
+            value = str(group_dict.get(name) or "").strip()
+            if value:
+                return value
+        return ""
+
+    for pattern, mod_type, confidence in (
+        (_MODIFICATION_SWAP_RE, "swap", 0.85),
+        (_MODIFICATION_REPLACE_RE, "swap", 0.85),
+    ):
+        matched = pattern.search(search_text)
+        if not matched:
+            continue
+        from_raw = _extract_group(matched, "from_ko", "from_ko_alt")
+        to_raw = _extract_group(matched, "to_ko", "to_ko_alt")
+        from_group = _canonicalize_substituent(from_raw) if from_raw else None
+        to_group = _canonicalize_substituent(to_raw) if to_raw else None
+        if to_group and not from_group:
+            from_group = "hydrogen"
+            from_raw = from_raw or "수소"
+            confidence = min(confidence, 0.7)
+        if from_group and to_group and from_group != to_group:
+            return {
+                "from_group": from_group,
+                "to_group": to_group,
+                "from_group_ko": from_raw or None,
+                "to_group_ko": to_raw or None,
+                "modification_type": mod_type,
+                "confidence": confidence,
+            }
+
+    arrow_match = re.search(
+        rf"(?P<from_ko>{_SUBSTITUENT_TERM_RE})\s*(?:->|→|=>|to|로|으로)\s*(?P<to_ko>{_SUBSTITUENT_TERM_RE})",
+        search_text,
+        re.IGNORECASE,
+    )
+    if arrow_match:
+        from_raw = _extract_group(arrow_match, "from_ko")
+        to_raw = _extract_group(arrow_match, "to_ko")
+        from_group = _canonicalize_substituent(from_raw)
+        to_group = _canonicalize_substituent(to_raw)
+        if from_group and to_group and from_group != to_group:
+            return {
+                "from_group": from_group,
+                "to_group": to_group,
+                "from_group_ko": from_raw or None,
+                "to_group_ko": to_raw or None,
+                "modification_type": "swap",
+                "confidence": 0.8,
+            }
+
+    add_match = _MODIFICATION_ADD_RE.search(search_text)
+    if add_match:
+        to_raw = _extract_group(add_match, "to_ko", "to_ko_alt")
+        to_group = _canonicalize_substituent(to_raw)
+        if to_group:
+            return {
+                "from_group": "hydrogen",
+                "to_group": to_group,
+                "from_group_ko": "수소",
+                "to_group_ko": to_raw or None,
+                "modification_type": "addition",
+                "confidence": 0.75,
+            }
+
+    remove_match = _MODIFICATION_REMOVE_RE.search(search_text)
+    if remove_match:
+        from_raw = _extract_group(remove_match, "from_ko", "from_ko_alt")
+        from_group = _canonicalize_substituent(from_raw)
+        if from_group:
+            return {
+                "from_group": from_group,
+                "to_group": "hydrogen",
+                "from_group_ko": from_raw or None,
+                "to_group_ko": "수소",
+                "modification_type": "removal",
+                "confidence": 0.75,
+            }
+
+    if _MODIFICATION_CONDITIONAL_RE_P2.search(search_text):
+        token_candidates = [
+            _canonicalize_substituent(token)
+            for token in re.findall(r"[A-Za-z가-힣][A-Za-z0-9가-힣\-]{1,20}", search_text)
+        ]
+        token_candidates = [token for token in token_candidates if token]
+        deduped = _dedupe_keep_order([str(token) for token in token_candidates])
+        if len(deduped) >= 2 and deduped[0] != deduped[1]:
+            return {
+                "from_group": deduped[0],
+                "to_group": deduped[1],
+                "from_group_ko": None,
+                "to_group_ko": None,
+                "modification_type": "swap",
+                "confidence": 0.65,
+            }
+        if len(deduped) == 1:
+            return {
+                "from_group": "hydrogen",
+                "to_group": deduped[0],
+                "from_group_ko": "수소",
+                "to_group_ko": None,
+                "modification_type": "addition",
+                "confidence": 0.6,
+            }
+
+    return None
+
+
+def detect_implicit_follow_up(
+    text: Optional[str],
+    *,
+    has_active_molecule: bool,
+    has_explicit_molecule_name: bool,
+) -> Dict[str, Any]:
+    """Detect whether a turn is an implicit follow-up referencing prior context."""
+    raw = _normalize_formula_text(str(text or "").strip())
+    result: Dict[str, Any] = {
+        "is_implicit_follow_up": False,
+        "follow_up_type": None,
+        "modification_detected": False,
+        "comparison_detected": False,
+        "structure_reference_detected": False,
+    }
+    if not raw:
+        return result
+
+    search_text = _space_korean_compounds(raw)
+    if not search_text:
+        return result
+
+    parsed_modification = parse_modification_intent(search_text)
+    modification_detected = bool(
+        parsed_modification
+        or _IMPLICIT_FOLLOW_UP_MODIFICATION_RE.search(search_text)
+        or _MODIFICATION_CONDITIONAL_RE_P2.search(search_text)
+        or re.search(
+            r"\b(?:swap|replace|change|substitute|add|remove|delete|detach|drop)\b|교체|치환|변경|바꾸|바꿔|추가|첨가|붙이|제거|삭제|없애|빼|작용기|치환기",
+            search_text,
+            re.IGNORECASE,
+        )
+    )
+    comparison_detected = bool(
+        _IMPLICIT_FOLLOW_UP_COMPARISON_RE.search(search_text)
+        or re.search(r"비교|이성질체|차이|대비|vs|versus", search_text, re.IGNORECASE)
+    )
+    structure_reference_detected = bool(
+        _IMPLICIT_FOLLOW_UP_SUBJECT_ABSENT_RE.search(search_text)
+        or _IMPLICIT_FOLLOW_UP_REMAINING_PROGRESS_RE.search(search_text)
+        or _FOLLOW_UP_CONTINUATION_CUE_RE.search(search_text)
+        or _FOLLOW_UP_ANALYSIS_SUFFIX_RE.search(search_text)
+        or re.search(r"\b(?:then|what about|how about)\b|그럼|그러면|그렇다면|이번엔|만약", search_text, re.IGNORECASE)
+    )
+
+    follow_up_type: Optional[str] = None
+    if modification_detected:
+        follow_up_type = "modification_request"
+    elif comparison_detected:
+        follow_up_type = "comparison_request"
+    elif structure_reference_detected:
+        follow_up_type = "structure_reference"
+
+    result["modification_detected"] = modification_detected
+    result["comparison_detected"] = comparison_detected
+    result["structure_reference_detected"] = structure_reference_detected
+    result["follow_up_type"] = follow_up_type
+
+    if follow_up_type and has_active_molecule and not has_explicit_molecule_name:
+        result["is_implicit_follow_up"] = True
+
+    return result

@@ -1,6 +1,5 @@
 from __future__ import annotations
 import math
-import os
 import pytest
 from qcviz_mcp.compute import pyscf_runner
 pytestmark = [pytest.mark.real_pyscf, pytest.mark.slow]
@@ -29,7 +28,6 @@ def test_real_partial_charges_water():
     total_charge = sum(float(x["charge"]) for x in result["partial_charges"])
     assert total_charge == pytest.approx(0.0, abs=1.0e-4)
 
-@pytest.mark.skipif(os.getenv("QCVIZ_RUN_REAL_ANALYZE", "0") != "1", reason="Set QCVIZ_RUN_REAL_ANALYZE=1 to enable the expensive full analyze integration test.")
 def test_real_analyze_water_smoke():
     result = pyscf_runner.run_analyze(structure_query="water", method="HF", basis="STO-3G", orbital="HOMO", esp_preset="acs")
     assert result["success"] is True

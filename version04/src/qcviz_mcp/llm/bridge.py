@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 from qcviz_mcp.llm.rule_provider import plan_from_message
+from qcviz_mcp.llm.providers import get_timeout_profile
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,26 @@ class LLMBridge:
 
     def __init__(self, mode: str = "auto") -> None:
         self.mode = mode or "auto"
+        self._current_stage = "action_planner"
+
+    @staticmethod
+    def _resolve_profile(stage_name: str) -> Dict[str, float]:
+        return get_timeout_profile(stage_name)
+
+    def _profile(self, stage_name: str) -> Dict[str, float]:
+        self._current_stage = stage_name
+        return self._resolve_profile(stage_name)
 
     def interpret_user_intent(self, message: str) -> Intent:
         """Interpret natural language into structured intent."""
+        _profile = self._profile("action_planner")
+        _timeout = _profile["timeout"]
+        _max_retries = int(_profile["max_retries"])
+        logger.debug(
+            "Interpret intent using stage profile. timeout=%s max_retries=%s",
+            _timeout,
+            _max_retries,
+        )
         parsed = plan_from_message(message)
         return Intent(
             intent=parsed.intent,
@@ -74,6 +92,15 @@ class LLMBridge:
         for key, value in dict(params or {}).items():
             if accepts_kwargs or key in sig.parameters:
                 kwargs[key] = value
+
+        timeout_profile = self._profile("advisor_tool")
+        _timeout = timeout_profile["timeout"]
+        _max_retries = int(timeout_profile["max_retries"])
+        logger.debug(
+            "Call advisor tool using timeout profile. timeout=%s max_retries=%s",
+            _timeout,
+            _max_retries,
+        )
 
         raw = func(**kwargs)
 

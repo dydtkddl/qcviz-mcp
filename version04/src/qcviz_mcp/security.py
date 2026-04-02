@@ -11,6 +11,11 @@ _PROJECT_ROOT = os.path.realpath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
 
+
+class ValidationError(ValueError):
+    """Raised when user-provided input fails security validation."""
+
+
 def validate_path(path: str, mode: str = "r") -> Path:
     """경로 탐색 공격 방지를 위한 경로 검증."""
     if ":" in path:
@@ -109,5 +114,64 @@ TOOL_COSTS = {
     "convert_format": 1,
 }
 
+# ── Phase 4: Phase 2~3 tool costs ────────────────────────────
+TOOL_COSTS.update({
+    "modification_preview": 8,     # RDKit substituent scan
+    "modification_apply": 12,      # RDKit + SMILES validation
+    "comparison_submit": 15,       # 2× full SCF calculation
+    "comparison_delta": 10,        # delta post-processing + explanation
+})
+
 # 기본 버킷: 분당 60 토큰, 최대 100 토큰
 default_bucket = TokenBucket(capacity=100, refill_rate=1.0)
+
+
+# ── Phase 4: Input sanitization for Phase 2~3 ───────────────
+
+_FORBIDDEN_SUBSTITUENT_CHARS = re.compile(r"[;|&$`\\<>{}()\[\]!]")
+_MAX_SUBSTITUENT_NAME_LEN = 50
+
+
+def validate_modification_input(
+    from_group: "str | None",
+    to_group: "str | None",
+    base_smiles: "str | None",
+    *,
+    max_smiles_len: int = 500,
+) -> None:
+    """Validate Phase 2 modification request inputs."""
+    for label, val in [("from_group", from_group), ("to_group", to_group)]:
+        if val is None:
+            continue
+        if len(val) > _MAX_SUBSTITUENT_NAME_LEN:
+            raise ValidationError(
+                f"{label} too long (max {_MAX_SUBSTITUENT_NAME_LEN})"
+            )
+        if _FORBIDDEN_SUBSTITUENT_CHARS.search(val):
+            raise ValidationError(
+                f"{label} contains forbidden characters"
+            )
+    if base_smiles is not None and len(base_smiles) > max_smiles_len:
+        raise ValidationError(
+            f"base_smiles too long (max {max_smiles_len})"
+        )
+
+
+def validate_comparison_input(
+    mol_a: str,
+    mol_b: str,
+    *,
+    max_name_len: int = 200,
+) -> None:
+    """Validate Phase 3 comparison request inputs."""
+    for label, val in [("mol_a", mol_a), ("mol_b", mol_b)]:
+        if not val or not val.strip():
+            raise ValidationError(f"{label} must not be empty")
+        if len(val) > max_name_len:
+            raise ValidationError(
+                f"{label} too long (max {max_name_len})"
+            )
+        if _FORBIDDEN_SUBSTITUENT_CHARS.search(val):
+            raise ValidationError(
+                f"{label} contains forbidden characters"
+            )
