@@ -549,6 +549,8 @@ class ModificationIntent(BaseModel):
     from_group_ko: Optional[str] = None
     to_group_ko: Optional[str] = None
     position_hint: Optional[str] = None
+    target_position: Optional[int] = None
+    replace_all: bool = False
     base_molecule_name: Optional[str] = None
     base_molecule_smiles: Optional[str] = None
     confidence: float = 0.0
@@ -571,6 +573,16 @@ class ModificationIntent(BaseModel):
     @classmethod
     def _normalize_modification_confidence(cls, value: Any) -> float:
         return _clamp_confidence(value)
+
+    @field_validator("target_position", mode="before")
+    @classmethod
+    def _normalize_target_position(cls, value: Any) -> Optional[int]:
+        return _as_optional_int(value)
+
+    @field_validator("replace_all", mode="before")
+    @classmethod
+    def _normalize_replace_all(cls, value: Any) -> bool:
+        return _as_bool(value)
 
 
 class PlanResult(BaseModel):

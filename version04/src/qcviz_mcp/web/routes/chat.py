@@ -42,6 +42,7 @@ from qcviz_mcp.web.auth_store import get_auth_user
 from qcviz_mcp.web.conversation_state import (
     get_active_molecule,
     load_conversation_state,
+    set_active_molecule,
     update_conversation_state,
 )
 from qcviz_mcp.web.runtime_info import runtime_debug_info, runtime_fingerprint
@@ -433,6 +434,50 @@ def _plan_is_modification_exploration(plan: Optional[Mapping[str, Any]]) -> bool
     return lane == "modification_exploration"
 
 
+def _force_implicit_modification_lane(
+    session_id: str,
+    plan: Optional[Mapping[str, Any]],
+    *,
+    manager: Optional[Any] = None,
+) -> Dict[str, Any]:
+    plan_dict = dict(plan or {})
+    if not plan_dict:
+        return {}
+    if not _modification_lane_enabled():
+        return plan_dict
+    if _plan_is_modification_exploration(plan_dict):
+        return plan_dict
+
+    implicit_follow_up = _safe_str(plan_dict.get("implicit_follow_up_type")).lower()
+    if implicit_follow_up != "modification_request":
+        return plan_dict
+
+    active = get_active_molecule(session_id, manager=manager) or {}
+    context_name = _safe_str(plan_dict.get("context_molecule_name") or active.get("canonical_name"))
+    context_smiles = _safe_str(plan_dict.get("context_molecule_smiles") or active.get("smiles"))
+    if not context_name and not context_smiles:
+        state = load_conversation_state(session_id, manager=manager)
+        context_name = _safe_str(state.get("last_structure_query") or state.get("last_resolved_name"))
+    if not context_name and not context_smiles:
+        return plan_dict
+
+    plan_dict["lane"] = "modification_exploration"
+    plan_dict["planner_lane"] = "modification_exploration"
+    plan_dict["query_kind"] = "modification_exploration"
+    plan_dict["semantic_grounding_needed"] = False
+    plan_dict["needs_clarification"] = False
+    plan_dict["clarification_kind"] = None
+    plan_dict["context_molecule_name"] = context_name or plan_dict.get("context_molecule_name")
+    plan_dict["context_molecule_smiles"] = context_smiles or plan_dict.get("context_molecule_smiles")
+    if not isinstance(plan_dict.get("modification_intent"), Mapping):
+        plan_dict["modification_intent"] = {
+            "from_group": "",
+            "to_group": "",
+            "confidence": 0.0,
+        }
+    return plan_dict
+
+
 def _extract_modification_request_state(
     session_id: str,
     plan: Optional[Mapping[str, Any]],
@@ -459,6 +504,40 @@ def _extract_modification_request_state(
     if isinstance(modification_intent, Mapping):
         return active_molecule, dict(modification_intent)
     return active_molecule, {}
+
+
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _resolve_modification_position(intent: Mapping[str, Any]) -> tuple[Optional[int], bool, Optional[str]]:
+    position_hint = _safe_str(intent.get("position_hint"))
+    target_position = _coerce_optional_int(intent.get("target_position"))
+    replace_all = _coerce_bool(intent.get("replace_all"))
+
+    position_hint_lower = position_hint.lower()
+    if not replace_all and position_hint_lower in {"all", "전체", "전부", "모두", "다"}:
+        replace_all = True
+
+    if target_position is None and position_hint_lower:
+        matched = re.search(r"(?:site[_\\s-]*)?(\\d{1,2})", position_hint_lower)
+        if matched:
+            target_position = _coerce_optional_int(matched.group(1))
+
+    return target_position, replace_all, position_hint or None
 
 
 def _resolve_chat_response(plan: Optional[Mapping[str, Any]], message: str, *, history: Optional[List[Dict[str, str]]] = None) -> str:
@@ -719,13 +798,13 @@ async def _resolve_semantic_chat_mode(
     outcome = _determine_semantic_grounding_outcome(plan, candidates)
     direct_response = _build_semantic_chat_response(query, plan, candidates, semantic_outcome=outcome.semantic_outcome)
     if direct_response:
-        state_update = _build_semantic_chat_continuation_state(candidates)
-        if state_update:
-            update_conversation_state(
-                session_id,
-                state_update,
-                manager=get_job_manager(),
-            )
+        await _persist_chat_only_structure_context(
+            session_id=session_id,
+            plan=plan,
+            raw_message=raw_message,
+            semantic_candidates=candidates,
+            manager=get_job_manager(),
+        )
         return {
             "kind": "chat",
             "message": direct_response,
@@ -782,6 +861,151 @@ def _build_semantic_chat_continuation_state(candidates: List[Dict[str, Any]]) ->
             "formula": formula,
         },
     }
+
+
+def _collect_chat_only_structure_hints(
+    plan: Optional[Mapping[str, Any]],
+    raw_message: str,
+    *,
+    semantic_candidates: Optional[List[Mapping[str, Any]]] = None,
+) -> List[str]:
+    hints: List[str] = []
+    plan_dict = dict(plan or {})
+
+    for candidate in list(semantic_candidates or []):
+        token = _safe_str(candidate.get("name"))
+        if token:
+            hints.append(token)
+
+    for key in ("resolved_structure_name", "structure_query", "context_molecule_name"):
+        token = _safe_str(plan_dict.get(key))
+        if token:
+            hints.append(token)
+
+    action_target = dict((plan_dict.get("action_plan") or {}).get("target") or {})
+    target_text = _safe_str(action_target.get("molecule_text"))
+    if target_text:
+        hints.append(target_text)
+
+    for key in ("canonical_candidates", "structure_query_candidates"):
+        for value in list(plan_dict.get(key) or []):
+            token = _safe_str(value)
+            if token:
+                hints.append(token)
+
+    detected = _detect_follow_up_molecule(raw_message or "")
+    if detected:
+        hints.append(detected)
+
+    out: List[str] = []
+    for token in _dedupe_strings(hints):
+        if _looks_like_molecule(token):
+            out.append(token)
+            continue
+        translated = _safe_str(find_molecule_name(token))
+        if translated and _looks_like_molecule(translated):
+            out.append(translated)
+    return _dedupe_strings(out)[:6]
+
+
+async def _resolve_context_molecule_from_hint(hint: str) -> Dict[str, Any]:
+    query = _safe_str(hint)
+    if not query:
+        return {}
+
+    resolver = _get_resolver()
+    molchat = getattr(resolver, "molchat", None) if resolver is not None else None
+    if molchat is not None and hasattr(molchat, "search"):
+        try:
+            search_payload = await molchat.search(query, limit=3)
+        except Exception:
+            logger.debug("Context search failed for %r", query, exc_info=True)
+            search_payload = {}
+        for row in list((search_payload or {}).get("results") or []):
+            name = _safe_str(row.get("name")) or query
+            smiles = _safe_str(row.get("canonical_smiles") or row.get("smiles"))
+            cid = row.get("cid")
+            formula = _safe_str(row.get("molecular_formula"))
+            if not smiles and cid and hasattr(molchat, "card"):
+                try:
+                    card = await molchat.card(cid)
+                except Exception:
+                    card = {}
+                smiles = _safe_str((card or {}).get("canonical_smiles") or (card or {}).get("smiles"))
+            if name:
+                resolved = {"canonical_name": name}
+                if smiles:
+                    resolved["smiles"] = smiles
+                if formula:
+                    resolved["formula"] = formula
+                if cid is not None:
+                    resolved["cid"] = cid
+                return resolved
+
+    translated = _safe_str(find_molecule_name(query))
+    canonical_name = translated or query
+    return {"canonical_name": canonical_name} if canonical_name else {}
+
+
+async def _persist_chat_only_structure_context(
+    *,
+    session_id: str,
+    plan: Optional[Mapping[str, Any]],
+    raw_message: str,
+    semantic_candidates: Optional[List[Mapping[str, Any]]] = None,
+    manager: Optional[Any] = None,
+) -> None:
+    if not _safe_str(session_id):
+        return
+
+    manager = manager or get_job_manager()
+    hints = _collect_chat_only_structure_hints(
+        plan,
+        raw_message,
+        semantic_candidates=semantic_candidates,
+    )
+    if not hints:
+        return
+
+    resolved: Dict[str, Any] = {}
+    for hint in hints:
+        resolved = await _resolve_context_molecule_from_hint(hint)
+        if _safe_str(resolved.get("canonical_name")):
+            break
+    if not _safe_str(resolved.get("canonical_name")):
+        return
+
+    canonical_name = _safe_str(resolved.get("canonical_name"))
+    smiles = _safe_str(resolved.get("smiles"))
+    formula = _safe_str(resolved.get("formula"))
+
+    molecule: Dict[str, Any] = {"canonical_name": canonical_name}
+    if smiles:
+        molecule["smiles"] = smiles
+    if formula:
+        molecule["formula"] = formula
+    if resolved.get("cid") is not None:
+        molecule["cid"] = resolved.get("cid")
+    set_active_molecule(session_id, molecule, manager=manager)
+
+    artifact: Dict[str, Any] = {
+        "structure_query": canonical_name,
+        "structure_name": canonical_name,
+    }
+    if formula:
+        artifact["formula"] = formula
+    if smiles:
+        artifact["smiles"] = smiles
+
+    update_conversation_state(
+        session_id,
+        {
+            "last_structure_query": canonical_name,
+            "last_resolved_name": canonical_name,
+            "last_resolved_artifact": artifact,
+        },
+        manager=manager,
+    )
 
 
 def _build_semantic_chat_response(
@@ -2323,7 +2547,7 @@ async def _ws_send(websocket: WebSocket, event_type: str, **payload: Any) -> Non
 
 
 def _modification_lane_enabled() -> bool:
-    return os.getenv("QCVIZ_MODIFICATION_LANE_ENABLED", "false").strip().lower() in {
+    return os.getenv("QCVIZ_MODIFICATION_LANE_ENABLED", "true").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -2438,10 +2662,21 @@ async def _handle_modification_exploration(
     base_name = (
         _safe_str(active_molecule.get("canonical_name"))
         or _safe_str(plan.get("context_molecule_name"))
+        or _safe_str(modification_intent.get("base_molecule_name"))
         or "molecule"
     )
+    base_name_hint = _safe_str(base_name)
+    if base_name_hint and base_name_hint != "molecule":
+        extracted_base_name = _safe_str(extract_structure_candidate(base_name_hint))
+        if extracted_base_name:
+            base_name = extracted_base_name
+
+    intent_base_smiles = _safe_str(modification_intent.get("base_molecule_smiles"))
+    if not base_smiles and intent_base_smiles:
+        base_smiles = intent_base_smiles
     from_group = _safe_str(modification_intent.get("from_group")).lower()
     to_group = _safe_str(modification_intent.get("to_group")).lower()
+    target_position, replace_all, position_hint = _resolve_modification_position(modification_intent)
 
     try:
         validate_modification_input(from_group, to_group, base_smiles)
@@ -2467,23 +2702,43 @@ async def _handle_modification_exploration(
         )
         return
 
-    if not base_smiles:
-        await _ws_send(
-            websocket,
-            "assistant",
-            session_id=session_id,
-            message="I need a base molecule with a stored SMILES string before I can explore substituent changes.",
-            turn_id=turn_id,
-            timestamp=_now_ts(),
-        )
-        return
+    if not base_smiles and base_name and base_name != "molecule":
+        try:
+            resolved = await _resolve_context_molecule_from_hint(base_name)
+        except Exception:
+            resolved = {}
+        resolved_name = _safe_str((resolved or {}).get("canonical_name"))
+        resolved_smiles = _safe_str((resolved or {}).get("smiles"))
+        if resolved_name:
+            base_name = resolved_name
+        if resolved_smiles:
+            base_smiles = resolved_smiles
+            set_active_molecule(
+                session_id,
+                {
+                    "canonical_name": base_name,
+                    "smiles": base_smiles,
+                },
+                manager=get_job_manager(),
+            )
 
     if not from_group or not to_group:
         await _ws_send(
             websocket,
             "assistant",
             session_id=session_id,
-            message="Please specify which substituent to replace and which substituent to insert.",
+            message="어떤 기능기를 무엇으로 바꿀지 알려주세요. 예: '아닐린에서 amino를 nitro로 바꿔줘' 또는 'methyl -> ethyl'.",
+            turn_id=turn_id,
+            timestamp=_now_ts(),
+        )
+        return
+
+    if not base_smiles:
+        await _ws_send(
+            websocket,
+            "assistant",
+            session_id=session_id,
+            message="기준 분자를 먼저 지정해 주세요. 예: 'aniline에서 methyl -> ethyl 치환'.",
             turn_id=turn_id,
             timestamp=_now_ts(),
         )
@@ -2495,6 +2750,8 @@ async def _handle_modification_exploration(
             from_group,
             to_group,
             max_candidates=MODIFICATION_MAX_CANDIDATES,
+            target_position=target_position,
+            replace_all=replace_all,
         )
     except Exception as exc:
         logger.warning("Modification candidate generation failed: %s", exc)
@@ -2521,6 +2778,9 @@ async def _handle_modification_exploration(
         },
         from_group=from_group,
         to_group=to_group,
+        position_hint=position_hint,
+        target_position=target_position,
+        replace_all=replace_all,
         candidates=candidates,
         message=f"Found {len(candidates)} candidate structures for {base_name} ({from_group} -> {to_group}).",
         plan=_public_plan_dict(plan),
@@ -2783,6 +3043,11 @@ async def post_chat(
         plan = merge_state.get("plan") or {}
     else:
         plan = _build_validated_plan(raw_message, body) if raw_message else {}
+        plan = _force_implicit_modification_lane(
+            session_id,
+            plan,
+            manager=get_job_manager(),
+        )
         semantic_chat = await _resolve_semantic_chat_mode(
             plan,
             body=body,
@@ -2812,12 +3077,19 @@ async def post_chat(
                 "job": None,
             }
         if _plan_is_chat_only(plan):
+            chat_message = await _resolve_chat_response_async(plan, raw_message)
+            await _persist_chat_only_structure_context(
+                session_id=session_id,
+                plan=plan,
+                raw_message=raw_message,
+                manager=get_job_manager(),
+            )
             return {
                 "ok": True,
                 "chat_only": True,
                 "session_id": session_id,
                 "session_token": session_meta["session_token"],
-                "message": await _resolve_chat_response_async(plan, raw_message),
+                "message": chat_message,
                 "plan": _public_plan_dict(plan),
                 "job": None,
             }
@@ -3021,7 +3293,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     prepared["owner_username"] = auth_user["username"]
                     prepared["owner_display_name"] = auth_user.get("display_name") or auth_user["username"]
 
-                if _modification_lane_enabled() and _plan_is_modification_exploration(merge_state.get("plan")):
+                if _plan_is_modification_exploration(merge_state.get("plan")):
                     manager = get_job_manager()
                     active_molecule, modification_intent = _extract_modification_request_state(
                         session_id,
@@ -3100,6 +3372,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
             try:
                 preliminary_plan = _build_validated_plan(user_message, incoming) if user_message else {}
+                preliminary_plan = _force_implicit_modification_lane(
+                    session_id,
+                    preliminary_plan,
+                    manager=get_job_manager(),
+                )
             except Exception as exc:
                 logger.warning("Preliminary chat plan generation failed: %s", exc)
                 preliminary_plan = {}
@@ -3154,6 +3431,12 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     user_message or "",
                     history=session_state.get("chat_history", []),
                 )
+                await _persist_chat_only_structure_context(
+                    session_id=session_id,
+                    plan=preliminary_plan,
+                    raw_message=user_message or "",
+                    manager=get_job_manager(),
+                )
                 session_state.setdefault("chat_history", []).append(
                     {"role": "user", "content": user_message or ""}
                 )
@@ -3203,10 +3486,21 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
             try:
                 plan = _build_validated_plan(user_message, incoming) if user_message else {}
+                plan = _force_implicit_modification_lane(
+                    session_id,
+                    plan,
+                    manager=get_job_manager(),
+                )
             except Exception as exc:
                 logger.warning("Plan generation failed: %s", exc)
                 plan = {}
-            if _modification_lane_enabled() and _plan_is_modification_exploration(plan):
+            if (
+                not _plan_is_modification_exploration(plan)
+                and _plan_is_modification_exploration(preliminary_plan)
+            ):
+                plan = dict(preliminary_plan)
+
+            if _plan_is_modification_exploration(plan):
                 manager = get_job_manager()
                 active_molecule, modification_intent = _extract_modification_request_state(
                     session_id,

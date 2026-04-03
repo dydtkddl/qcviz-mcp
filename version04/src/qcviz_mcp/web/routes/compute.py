@@ -1738,6 +1738,19 @@ def _apply_session_continuation(out: Dict[str, Any], *, source_text: str = "") -
         if out.get("charge") is None and normalization.get("charge_hint") is not None:
             out["charge"] = normalization.get("charge_hint")
 
+    has_context_state = bool(load_conversation_state(session_id, manager=get_job_manager()))
+    implicit_follow_up = _safe_str(out.get("implicit_follow_up_type"))
+    if (
+        not follow_up_mode
+        and implicit_follow_up in {"modification_request", "structure_reference"}
+        and (
+            _safe_str(out.get("context_molecule_name"))
+            or has_context_state
+        )
+    ):
+        follow_up_mode = "reuse_last_structure"
+        out["follow_up_mode"] = follow_up_mode
+
     planner_requests_grounding = bool(
         out.get("semantic_grounding_needed")
         or _safe_str(out.get("query_kind")) == "grounding_required"

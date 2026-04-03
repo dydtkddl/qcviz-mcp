@@ -1,0 +1,213 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "한글 기능기명 → 영어 canonical → SMARTS 패턴 통합 사전",
+    "usage": "structure_intelligence.py, normalizer.py에서 import하여 사용",
+    "location": "version04/src/qcviz_mcp/services/fg_ko_smarts.json"
+  },
+  "functional_groups": [
+    {
+      "ko": ["수소", "하이드로겐", "H"],
+      "en": "hydrogen",
+      "smarts_pattern": "[H]",
+      "smarts_replacement": "[H]",
+      "category": "atom"
+    },
+    {
+      "ko": ["메틸기", "메틸", "CH3"],
+      "en": "methyl",
+      "smarts_pattern": "[CH3]",
+      "smarts_replacement": "[CH3]",
+      "category": "alkyl"
+    },
+    {
+      "ko": ["에틸기", "에틸", "C2H5"],
+      "en": "ethyl",
+      "smarts_pattern": "[CH2][CH3]",
+      "smarts_replacement": "CC",
+      "category": "alkyl"
+    },
+    {
+      "ko": ["프로필기", "프로필", "n-프로필"],
+      "en": "propyl",
+      "smarts_pattern": "[CH2][CH2][CH3]",
+      "smarts_replacement": "CCC",
+      "category": "alkyl"
+    },
+    {
+      "ko": ["이소프로필기", "이소프로필", "아이소프로필"],
+      "en": "isopropyl",
+      "smarts_pattern": "[CH]([CH3])[CH3]",
+      "smarts_replacement": "C(C)C",
+      "category": "alkyl"
+    },
+    {
+      "ko": ["tert-부틸기", "터트부틸", "t-부틸"],
+      "en": "tert-butyl",
+      "smarts_pattern": "[CX4]([CH3])([CH3])[CH3]",
+      "smarts_replacement": "C(C)(C)C",
+      "category": "alkyl"
+    },
+    {
+      "ko": ["하이드록시기", "하이드록실기", "수산기", "히드록시", "OH기"],
+      "en": "hydroxy",
+      "smarts_pattern": "[OX2H]",
+      "smarts_replacement": "O",
+      "category": "oxygen"
+    },
+    {
+      "ko": ["메톡시기", "메톡시", "OCH3"],
+      "en": "methoxy",
+      "smarts_pattern": "[OX2][CH3]",
+      "smarts_replacement": "OC",
+      "category": "oxygen"
+    },
+    {
+      "ko": ["카르복실기", "카르복시기", "COOH기", "카복실"],
+      "en": "carboxyl",
+      "smarts_pattern": "[CX3](=O)[OX2H1]",
+      "smarts_replacement": "C(=O)O",
+      "category": "oxygen"
+    },
+    {
+      "ko": ["알데히드기", "알데하이드기", "포르밀기", "CHO기"],
+      "en": "formyl",
+      "smarts_pattern": "[CX3H1](=O)",
+      "smarts_replacement": "C=O",
+      "category": "oxygen"
+    },
+    {
+      "ko": ["케톤기", "카르보닐기", "C=O기"],
+      "en": "carbonyl",
+      "smarts_pattern": "[#6][CX3](=O)[#6]",
+      "smarts_replacement": "C(=O)",
+      "category": "oxygen"
+    },
+    {
+      "ko": ["아세틸기", "아세틸", "COCH3기"],
+      "en": "acetyl",
+      "smarts_pattern": "[CX3](=O)[CH3]",
+      "smarts_replacement": "C(=O)C",
+      "category": "oxygen"
+    },
+    {
+      "ko": ["에스테르기", "에스터기", "COO기"],
+      "en": "ester",
+      "smarts_pattern": "[#6][CX3](=O)[OX2H0][#6]",
+      "smarts_replacement": "C(=O)OC",
+      "category": "oxygen"
+    },
+    {
+      "ko": ["아미노기", "아민기", "1차아민", "NH2기"],
+      "en": "amino",
+      "smarts_pattern": "[NX3;H2;!$(NC=O)]",
+      "smarts_replacement": "N",
+      "category": "nitrogen"
+    },
+    {
+      "ko": ["나이트로기", "니트로기", "NO2기"],
+      "en": "nitro",
+      "smarts_pattern": "[$([NX3](=O)=O),$([NX3+](=O)[O-])]",
+      "smarts_replacement": "[N+](=O)[O-]",
+      "category": "nitrogen"
+    },
+    {
+      "ko": ["시아노기", "니트릴기", "CN기"],
+      "en": "cyano",
+      "smarts_pattern": "[CX2]#[NX1]",
+      "smarts_replacement": "C#N",
+      "category": "nitrogen"
+    },
+    {
+      "ko": ["아마이드기", "아미드기", "CONH2기"],
+      "en": "amide",
+      "smarts_pattern": "[CX3](=O)[NX3H2]",
+      "smarts_replacement": "C(=O)N",
+      "category": "nitrogen"
+    },
+    {
+      "ko": ["플루오로기", "플루오린", "불소기", "F기"],
+      "en": "fluoro",
+      "smarts_pattern": "[F]",
+      "smarts_replacement": "F",
+      "category": "halogen"
+    },
+    {
+      "ko": ["클로로기", "클로린", "염소기", "Cl기"],
+      "en": "chloro",
+      "smarts_pattern": "[Cl]",
+      "smarts_replacement": "Cl",
+      "category": "halogen"
+    },
+    {
+      "ko": ["브로모기", "브로민", "브롬기", "Br기"],
+      "en": "bromo",
+      "smarts_pattern": "[Br]",
+      "smarts_replacement": "Br",
+      "category": "halogen"
+    },
+    {
+      "ko": ["아이오도기", "요오드기", "I기"],
+      "en": "iodo",
+      "smarts_pattern": "[I]",
+      "smarts_replacement": "I",
+      "category": "halogen"
+    },
+    {
+      "ko": ["트리플루오로메틸기", "CF3기", "삼불화메틸"],
+      "en": "trifluoromethyl",
+      "smarts_pattern": "[CX4](F)(F)F",
+      "smarts_replacement": "C(F)(F)F",
+      "category": "halogen"
+    },
+    {
+      "ko": ["티올기", "설프하이드릴기", "SH기", "머캅토기"],
+      "en": "thiol",
+      "smarts_pattern": "[#16X2H]",
+      "smarts_replacement": "S",
+      "category": "sulfur"
+    },
+    {
+      "ko": ["설포닐기", "술포닐기", "SO2기"],
+      "en": "sulfonyl",
+      "smarts_pattern": "[#16X4](=[OX1])(=[OX1])",
+      "smarts_replacement": "S(=O)(=O)",
+      "category": "sulfur"
+    },
+    {
+      "ko": ["페닐기", "벤젠기", "Ph기"],
+      "en": "phenyl",
+      "smarts_pattern": "c1ccccc1",
+      "smarts_replacement": "c1ccccc1",
+      "category": "aromatic"
+    },
+    {
+      "ko": ["벤질기", "CH2Ph기"],
+      "en": "benzyl",
+      "smarts_pattern": "[CH2]c1ccccc1",
+      "smarts_replacement": "Cc1ccccc1",
+      "category": "aromatic"
+    },
+    {
+      "ko": ["비닐기", "에테닐기", "CH=CH2기"],
+      "en": "vinyl",
+      "smarts_pattern": "[CH]=[CH2]",
+      "smarts_replacement": "C=C",
+      "category": "unsaturated"
+    },
+    {
+      "ko": ["에틴일기", "아세틸렌기"],
+      "en": "ethynyl",
+      "smarts_pattern": "[CX2]#[CH]",
+      "smarts_replacement": "C#C",
+      "category": "unsaturated"
+    },
+    {
+      "ko": ["포스포릴기", "인산기", "PO4기"],
+      "en": "phosphoryl",
+      "smarts_pattern": "[PX4](=O)([OX2])([OX2])[OX2]",
+      "smarts_replacement": "P(=O)(O)(O)O",
+      "category": "phosphorus"
+    }
+  ]
+}

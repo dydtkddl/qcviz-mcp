@@ -16,7 +16,8 @@ _MODIFICATION_SWAP_RE = re.compile(
     re.IGNORECASE,
 )
 _MODIFICATION_REPLACE_RE = re.compile(
-    rf"(?:replace|substitute|교체|치환|변경|바꾸|바꿔)\s*(?:(?:the\s+)?(?P<from_ko>{_SUBSTITUENT_TERM_RE})\s*)?"
+    rf"(?:replace|substitute|교체|치환|변경|바꾸|바꿔)\s*"
+    rf"(?:(?:the\s+)?(?:all\s+|every\s+|전체\s+|전부\s+|모두\s+)?(?P<from_ko>{_SUBSTITUENT_TERM_RE})\s*)?"
     rf"(?:with|to|로|으로)\s*(?:(?:the\s+)?(?P<to_ko>{_SUBSTITUENT_TERM_RE}))",
     re.IGNORECASE,
 )
@@ -32,6 +33,16 @@ _MODIFICATION_ADD_RE = re.compile(
 _MODIFICATION_REMOVE_RE = re.compile(
     rf"(?:(?:remove|delete|detach|drop|제거|삭제|탈착|빼|없애)\s*(?:the\s+)?(?P<from_ko>{_SUBSTITUENT_TERM_RE})|"
     rf"(?P<from_ko_alt>{_SUBSTITUENT_TERM_RE})\s*(?:를|을)?\s*(?:제거|삭제|탈착|빼|없애|remove|delete|detach|drop))",
+    re.IGNORECASE,
+)
+_MODIFICATION_POSITION_RE = re.compile(
+    r"(?:(?P<position_num>\d{1,2})\s*(?:st|nd|rd|th)?\s*(?:site|position)\b|"
+    r"(?P<position_num_ko>\d{1,2})\s*(?:번|번째)\s*(?:위치|자리)?|"
+    r"(?P<locant>ortho|meta|para|오쏘|메타|파라))",
+    re.IGNORECASE,
+)
+_MODIFICATION_REPLACE_ALL_RE = re.compile(
+    r"\b(all|every|전체|전부|모두|다)\b",
     re.IGNORECASE,
 )
 _LOCAL_SUBSTITUENT_CANONICALS: Dict[str, str] = {
@@ -2378,6 +2389,115 @@ def parse_modification_intent(text: str) -> Optional[Dict[str, Any]]:
                 return value
         return ""
 
+    def _extract_position_info() -> tuple[Optional[str], Optional[int], bool]:
+        replace_all = bool(_MODIFICATION_REPLACE_ALL_RE.search(search_text))
+        position_hint: Optional[str] = "all" if replace_all else None
+        target_position: Optional[int] = None
+
+        matched = _MODIFICATION_POSITION_RE.search(search_text)
+        if matched:
+            num = matched.group("position_num") or matched.group("position_num_ko")
+            if num:
+                try:
+                    parsed = int(num)
+                except Exception:
+                    parsed = 0
+                if parsed > 0:
+                    target_position = parsed
+                    position_hint = f"site_{parsed}"
+            else:
+                locant = str(matched.group("locant") or "").strip().lower()
+                locant_map = {"오쏘": "ortho", "메타": "meta", "파라": "para"}
+                if locant:
+                    position_hint = locant_map.get(locant, locant)
+
+        return position_hint, target_position, replace_all
+
+    def _looks_like_smiles_token(token: str) -> bool:
+        value = str(token or "").strip()
+        if not value or len(value) < 2:
+            return False
+        if not re.fullmatch(r"[A-Za-z0-9@+\-\[\]\(\)=#$\\/.%]+", value):
+            return False
+        return bool(re.search(r"[\[\]()=#]", value))
+
+    def _extract_base_molecule(from_raw: str, to_raw: str) -> tuple[Optional[str], Optional[str]]:
+        candidate = str(extract_structure_candidate(search_text) or "").strip()
+        if not candidate:
+            return None, None
+        if re.search(
+            r"\b(?:swap|replace|change|substitute|add|remove|delete|detach|drop)\b|교체|치환|변경|바꾸|바꿔|추가|제거|삭제",
+            candidate,
+            re.IGNORECASE,
+        ):
+            return None, None
+
+        blocked_tokens: set[str] = set()
+        for token in (from_raw, to_raw):
+            normalized = _normalize_substituent_token(token)
+            if normalized:
+                blocked_tokens.add(normalized)
+            canonical = _canonicalize_substituent(token)
+            if canonical:
+                blocked_tokens.add(str(canonical).strip().lower())
+
+        candidate_norm = _normalize_substituent_token(candidate)
+        if candidate_norm in blocked_tokens:
+            return None, None
+        if candidate_norm in _LOCAL_SUBSTITUENT_LOOKUP:
+            return None, None
+
+        if _looks_like_smiles_token(candidate):
+            return None, candidate
+        return candidate, None
+
+    def _build_intent(
+        *,
+        from_group: str,
+        to_group: str,
+        from_raw: str,
+        to_raw: str,
+        modification_type: str,
+        confidence: float,
+    ) -> Dict[str, Any]:
+        position_hint, target_position, replace_all = _extract_position_info()
+        base_name, base_smiles = _extract_base_molecule(from_raw, to_raw)
+        return {
+            "from_group": from_group,
+            "to_group": to_group,
+            "from_group_ko": from_raw or None,
+            "to_group_ko": to_raw or None,
+            "modification_type": modification_type,
+            "confidence": max(0.0, min(1.0, float(confidence))),
+            "position_hint": position_hint,
+            "target_position": target_position,
+            "replace_all": replace_all,
+            "base_molecule_name": base_name,
+            "base_molecule_smiles": base_smiles,
+        }
+
+    all_swap_match = re.search(
+        rf"(?P<from_ko>{_SUBSTITUENT_TERM_RE})\s*(?:all|every|전체|전부|모두)\s*"
+        rf"(?P<to_ko>{_SUBSTITUENT_TERM_RE})\s*(?:with|to|로|으로)?\s*"
+        r"(?:치환|교체|변경|바꾸|바꿔|replace|swap|change|substitute)",
+        search_text,
+        re.IGNORECASE,
+    )
+    if all_swap_match:
+        from_raw = _extract_group(all_swap_match, "from_ko")
+        to_raw = _extract_group(all_swap_match, "to_ko")
+        from_group = _canonicalize_substituent(from_raw)
+        to_group = _canonicalize_substituent(to_raw)
+        if from_group and to_group and from_group != to_group:
+            return _build_intent(
+                from_group=from_group,
+                to_group=to_group,
+                from_raw=from_raw,
+                to_raw=to_raw,
+                modification_type="swap",
+                confidence=0.86,
+            )
+
     for pattern, mod_type, confidence in (
         (_MODIFICATION_SWAP_RE, "swap", 0.85),
         (_MODIFICATION_REPLACE_RE, "swap", 0.85),
@@ -2394,14 +2514,14 @@ def parse_modification_intent(text: str) -> Optional[Dict[str, Any]]:
             from_raw = from_raw or "수소"
             confidence = min(confidence, 0.7)
         if from_group and to_group and from_group != to_group:
-            return {
-                "from_group": from_group,
-                "to_group": to_group,
-                "from_group_ko": from_raw or None,
-                "to_group_ko": to_raw or None,
-                "modification_type": mod_type,
-                "confidence": confidence,
-            }
+            return _build_intent(
+                from_group=from_group,
+                to_group=to_group,
+                from_raw=from_raw,
+                to_raw=to_raw,
+                modification_type=mod_type,
+                confidence=confidence,
+            )
 
     arrow_match = re.search(
         rf"(?P<from_ko>{_SUBSTITUENT_TERM_RE})\s*(?:->|→|=>|to|로|으로)\s*(?P<to_ko>{_SUBSTITUENT_TERM_RE})",
@@ -2414,42 +2534,42 @@ def parse_modification_intent(text: str) -> Optional[Dict[str, Any]]:
         from_group = _canonicalize_substituent(from_raw)
         to_group = _canonicalize_substituent(to_raw)
         if from_group and to_group and from_group != to_group:
-            return {
-                "from_group": from_group,
-                "to_group": to_group,
-                "from_group_ko": from_raw or None,
-                "to_group_ko": to_raw or None,
-                "modification_type": "swap",
-                "confidence": 0.8,
-            }
+            return _build_intent(
+                from_group=from_group,
+                to_group=to_group,
+                from_raw=from_raw,
+                to_raw=to_raw,
+                modification_type="swap",
+                confidence=0.8,
+            )
 
     add_match = _MODIFICATION_ADD_RE.search(search_text)
     if add_match:
         to_raw = _extract_group(add_match, "to_ko", "to_ko_alt")
         to_group = _canonicalize_substituent(to_raw)
         if to_group:
-            return {
-                "from_group": "hydrogen",
-                "to_group": to_group,
-                "from_group_ko": "수소",
-                "to_group_ko": to_raw or None,
-                "modification_type": "addition",
-                "confidence": 0.75,
-            }
+            return _build_intent(
+                from_group="hydrogen",
+                to_group=to_group,
+                from_raw="수소",
+                to_raw=to_raw,
+                modification_type="addition",
+                confidence=0.75,
+            )
 
     remove_match = _MODIFICATION_REMOVE_RE.search(search_text)
     if remove_match:
         from_raw = _extract_group(remove_match, "from_ko", "from_ko_alt")
         from_group = _canonicalize_substituent(from_raw)
         if from_group:
-            return {
-                "from_group": from_group,
-                "to_group": "hydrogen",
-                "from_group_ko": from_raw or None,
-                "to_group_ko": "수소",
-                "modification_type": "removal",
-                "confidence": 0.75,
-            }
+            return _build_intent(
+                from_group=from_group,
+                to_group="hydrogen",
+                from_raw=from_raw,
+                to_raw="수소",
+                modification_type="removal",
+                confidence=0.75,
+            )
 
     if _MODIFICATION_CONDITIONAL_RE_P2.search(search_text):
         token_candidates = [
@@ -2459,23 +2579,23 @@ def parse_modification_intent(text: str) -> Optional[Dict[str, Any]]:
         token_candidates = [token for token in token_candidates if token]
         deduped = _dedupe_keep_order([str(token) for token in token_candidates])
         if len(deduped) >= 2 and deduped[0] != deduped[1]:
-            return {
-                "from_group": deduped[0],
-                "to_group": deduped[1],
-                "from_group_ko": None,
-                "to_group_ko": None,
-                "modification_type": "swap",
-                "confidence": 0.65,
-            }
+            return _build_intent(
+                from_group=deduped[0],
+                to_group=deduped[1],
+                from_raw="",
+                to_raw="",
+                modification_type="swap",
+                confidence=0.65,
+            )
         if len(deduped) == 1:
-            return {
-                "from_group": "hydrogen",
-                "to_group": deduped[0],
-                "from_group_ko": "수소",
-                "to_group_ko": None,
-                "modification_type": "addition",
-                "confidence": 0.6,
-            }
+            return _build_intent(
+                from_group="hydrogen",
+                to_group=deduped[0],
+                from_raw="수소",
+                to_raw="",
+                modification_type="addition",
+                confidence=0.6,
+            )
 
     return None
 

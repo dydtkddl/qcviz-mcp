@@ -38,11 +38,21 @@ async def test_handle_modification_exploration_sends_candidate_event(monkeypatch
     async def _fake_ws_send(websocket, event_type: str, **payload):
         captured.append((event_type, payload))
 
-    def _fake_generate(base_smiles: str, from_group: str, to_group: str, *, max_candidates: int):
+    def _fake_generate(
+        base_smiles: str,
+        from_group: str,
+        to_group: str,
+        *,
+        max_candidates: int,
+        target_position=None,
+        replace_all=False,
+    ):
         assert base_smiles == "c1ccccc1"
         assert from_group == "hydrogen"
         assert to_group == "methyl"
         assert max_candidates == MODIFICATION_MAX_CANDIDATES
+        assert target_position is None
+        assert replace_all is False
         return [
             {
                 "candidate_smiles": "Cc1ccccc1",
@@ -75,3 +85,89 @@ async def test_handle_modification_exploration_sends_candidate_event(monkeypatch
     assert payload["to_group"] == "methyl"
     assert payload["plan"]["planner_lane"] == "modification_exploration"
     assert payload["candidates"][0]["candidate_smiles"] == "Cc1ccccc1"
+
+
+@pytest.mark.asyncio
+async def test_handle_modification_exploration_resolves_base_from_context_hint(monkeypatch):
+    captured: list[tuple[str, dict]] = []
+
+    async def _fake_ws_send(websocket, event_type: str, **payload):
+        captured.append((event_type, payload))
+
+    def _fake_generate(
+        base_smiles: str,
+        from_group: str,
+        to_group: str,
+        *,
+        max_candidates: int,
+        target_position=None,
+        replace_all=False,
+    ):
+        assert base_smiles == "Nc1ccccc1"
+        assert from_group == "methyl"
+        assert to_group == "ethyl"
+        return [
+            {
+                "candidate_smiles": "CCNc1ccccc1",
+                "position_description": "site 1",
+                "atom_idx": 0,
+                "from_group": from_group,
+                "to_group": to_group,
+                "property_delta": {"mw_delta": 14.03, "logp_delta": 0.2, "tpsa_delta": 0.0},
+            }
+        ]
+
+    async def _fake_resolve_hint(hint: str):
+        assert "aniline" in hint.lower()
+        return {"canonical_name": "aniline", "smiles": "Nc1ccccc1"}
+
+    monkeypatch.setattr(chat_route, "_ws_send", _fake_ws_send)
+    monkeypatch.setattr(chat_route, "_resolve_context_molecule_from_hint", _fake_resolve_hint)
+    monkeypatch.setattr(chat_route, "set_active_molecule", lambda *args, **kwargs: None)
+    monkeypatch.setattr(structure_intelligence, "_RDKIT_AVAILABLE", True)
+    monkeypatch.setattr(structure_intelligence, "generate_modification_candidates", _fake_generate)
+
+    await chat_route._handle_modification_exploration(
+        object(),
+        session_id="session-1",
+        plan={"planner_lane": "modification_exploration", "context_molecule_name": "U aniline 기능기치환해보고싶어"},
+        active_molecule={},
+        modification_intent={"from_group": "methyl", "to_group": "ethyl"},
+        turn_id="turn-1",
+    )
+
+    assert captured
+    event_type, payload = captured[0]
+    assert event_type == "modification_candidates"
+    assert payload["base_molecule"]["name"] == "aniline"
+    assert payload["base_molecule"]["smiles"] == "Nc1ccccc1"
+
+
+def test_modification_lane_enabled_defaults_true(monkeypatch):
+    monkeypatch.delenv("QCVIZ_MODIFICATION_LANE_ENABLED", raising=False)
+    assert chat_route._modification_lane_enabled() is True
+
+
+@pytest.mark.asyncio
+async def test_handle_modification_exploration_prompts_for_missing_groups(monkeypatch):
+    captured: list[tuple[str, dict]] = []
+
+    async def _fake_ws_send(websocket, event_type: str, **payload):
+        captured.append((event_type, payload))
+
+    monkeypatch.setattr(chat_route, "_ws_send", _fake_ws_send)
+    monkeypatch.setattr(structure_intelligence, "_RDKIT_AVAILABLE", True)
+
+    await chat_route._handle_modification_exploration(
+        object(),
+        session_id="session-1",
+        plan={"planner_lane": "modification_exploration"},
+        active_molecule={"canonical_name": "aniline", "smiles": "Nc1ccccc1"},
+        modification_intent={"from_group": "", "to_group": ""},
+        turn_id="turn-1",
+    )
+
+    assert captured
+    event_type, payload = captured[0]
+    assert event_type == "assistant"
+    assert "무엇으로 바꿀지" in payload["message"]

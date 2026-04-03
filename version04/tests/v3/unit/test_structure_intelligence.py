@@ -9,7 +9,7 @@ from qcviz_mcp.services import structure_intelligence
 def test_structure_intelligence_exports_are_available():
     assert structure_intelligence is not None
     assert hasattr(structure_intelligence, "generate_modification_candidates")
-    assert len(structure_intelligence.SUBSTITUENT_SMARTS) == 13
+    assert len(structure_intelligence.SUBSTITUENT_SMARTS) >= 29
 
 
 def test_structure_intelligence_error_classes_have_expected_categories():

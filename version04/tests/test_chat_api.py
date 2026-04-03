@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import time
 import uuid
 import pytest
 from qcviz_mcp.web.routes import chat as chat_route
@@ -545,6 +544,68 @@ def test_chat_rest_semantic_direct_answer_persists_context_for_korean_pronoun_fo
     assert "requires_clarification" not in second_data
     assert second_data["plan"]["follow_up_mode"] in {"reuse_last_structure", "add_analysis"}
     assert second_data["result"]["structure_query"] == "Ethanolamine"
+
+
+def test_chat_rest_chat_only_molecule_name_persists_active_context(
+    client, patch_fake_runners, monkeypatch
+):
+    monkeypatch.setenv("QCVIZ_CONTEXT_TRACKING_ENABLED", "true")
+
+    async def _fake_chat_response(plan, message, history=None):
+        return "메틸에틸아민 설명입니다."
+
+    def _fake_validated_plan(raw_message, payload):
+        return {
+            "intent": "chat",
+            "job_type": "chat",
+            "query_kind": "chat_only",
+            "planner_lane": "chat_only",
+            "semantic_grounding_needed": False,
+            "canonical_candidates": ["\uba54\ud2f8\u3139ethylamine", "ethylamine"],
+            "structure_query_candidates": ["\uba54\ud2f8\u3139ethylamine", "ethylamine"],
+        }
+
+    class _DummyMolChat:
+        async def search(self, query: str, limit: int = 3):
+            return {
+                "results": [
+                    {
+                        "name": "ethylamine",
+                        "canonical_smiles": "CCN",
+                        "molecular_formula": "C2H7N",
+                        "cid": 6342,
+                    }
+                ]
+            }
+
+    class _DummyResolver:
+        molchat = _DummyMolChat()
+
+    monkeypatch.setattr(chat_route, "_resolve_chat_response_async", _fake_chat_response, raising=False)
+    monkeypatch.setattr(chat_route, "_build_validated_plan", _fake_validated_plan, raising=False)
+    monkeypatch.setattr(chat_route, "_get_resolver", lambda: _DummyResolver(), raising=False)
+
+    session = _bootstrap_session(client, "chat-only-context")
+    headers = {
+        "X-QCViz-Session-Id": session["session_id"],
+        "X-QCViz-Session-Token": session["session_token"],
+    }
+    resp = client.post(
+        "/api/chat",
+        headers=headers,
+        json={"message": "\uba54\ud2f8\u3139\uc5d0\ud2f8\uc544\ubbfc", "session_id": session["session_id"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["chat_only"] is True
+
+    state = load_conversation_state(session["session_id"], manager=chat_route.get_job_manager())
+    active = state.get("active_molecule") or {}
+    assert active.get("canonical_name") == "ethylamine"
+    assert active.get("smiles") == "CCN"
+    assert state.get("last_structure_query") == "ethylamine"
+    assert state.get("last_resolved_name") == "ethylamine"
 
 
 def test_chat_rest_korean_pronoun_without_session_does_not_surface_raw_pronoun_candidate(

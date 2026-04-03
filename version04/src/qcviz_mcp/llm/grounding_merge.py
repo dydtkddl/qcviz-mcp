@@ -92,6 +92,28 @@ def _synthetic_candidate(name: Optional[str], source: str = "plan") -> Optional[
     return GroundingCandidate(name=token, source=source, confidence=1.0 if source == "context" else 0.7)
 
 
+def _modification_base_candidate(plan: Any) -> Optional[GroundingCandidate]:
+    """Prefer explicit base-molecule info from modification intent when available."""
+    intent: Optional[Mapping[str, Any]] = None
+    if isinstance(plan, PlanResult) and plan.modification_intent is not None:
+        intent = plan.modification_intent.model_dump(exclude_none=True)
+    elif isinstance(plan, Mapping) and isinstance(plan.get("modification_intent"), Mapping):
+        intent = dict(plan.get("modification_intent") or {})
+    if not intent:
+        return None
+
+    name = _coerce_text(intent.get("base_molecule_name") or intent.get("base_molecule"))
+    smiles = _coerce_text(intent.get("base_molecule_smiles") or intent.get("base_smiles"))
+    if not name and not smiles:
+        return None
+    return GroundingCandidate(
+        name=name or smiles,
+        smiles=smiles or None,
+        source="modification_intent",
+        confidence=0.95 if smiles else 0.9,
+    )
+
+
 def _supports_direct_answer(candidate: Optional[GroundingCandidate], config: GroundingConfig) -> bool:
     if candidate is None:
         return False
@@ -157,6 +179,14 @@ def grounding_merge(
         )
 
     if lane == "modification_exploration":
+        intent_base = _modification_base_candidate(plan)
+        if intent_base is not None:
+            metrics.increment("modification_candidates_generated")
+            return GroundingOutcome(
+                semantic_outcome=SEMANTIC_OUTCOME_MODIFICATION_CANDIDATES_READY,
+                resolved_structure=intent_base,
+                candidates=candidates or [intent_base],
+            )
         if synthetic is not None:
             metrics.increment("modification_candidates_generated")
             return GroundingOutcome(

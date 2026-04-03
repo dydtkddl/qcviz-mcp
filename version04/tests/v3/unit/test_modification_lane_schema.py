@@ -5,6 +5,7 @@ import typing
 
 import pytest
 
+from qcviz_mcp.llm.normalizer import parse_modification_intent
 from qcviz_mcp.llm.lane_lock import LaneLock
 from qcviz_mcp.llm.schemas import (
     ExecutionAction,
@@ -85,3 +86,20 @@ def test_routing_config_modification_defaults(monkeypatch):
 
     assert reloaded.MODIFICATION_CONFIDENCE_THRESHOLD == 0.60
     assert reloaded.MODIFICATION_MAX_CANDIDATES == 5
+
+
+def test_parse_modification_intent_extracts_target_position():
+    parsed = parse_modification_intent("replace nitro with amino at 2nd position")
+    assert parsed is not None
+    assert parsed["from_group"] == "nitro"
+    assert parsed["to_group"] == "amino"
+    assert parsed["target_position"] == 2
+    assert parsed["replace_all"] is False
+
+
+def test_parse_modification_intent_extracts_replace_all():
+    parsed = parse_modification_intent("replace all hydroxy with methoxy")
+    assert parsed is not None
+    assert parsed["from_group"] == "hydroxy"
+    assert parsed["to_group"] == "methoxy"
+    assert parsed["replace_all"] is True
